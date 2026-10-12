@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type LeaveRequest, type PayrollRecord, type ProjectTask } from '../db/database';
 import { newestFirst } from '../utils/sort';
@@ -57,17 +57,29 @@ function Stat({ label, value, color, sub }: { label: string; value: string; colo
   );
 }
 
-/** Personal dashboard for a signed-in employee: only their own tasks, attendance, leave and salary. */
 export default function MyWorkspace({
   initialTab = 'overview',
+  onTabChange,
   onOpenAttendance,
 }: {
   initialTab?: WorkspaceTab;
+  onTabChange?: (tab: WorkspaceTab) => void;
   onOpenAttendance?: () => void;
 }) {
   const { user, myEmployee, companyProfile } = useAuth();
   const { showToast } = useToast();
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
+
+  const handleSelectTab = (t: WorkspaceTab) => {
+    setTab(t);
+    onTabChange?.(t);
+  };
+
+  useEffect(() => {
+    if (initialTab && initialTab !== tab) {
+      setTab(initialTab);
+    }
+  }, [initialTab]);
   const [busy, setBusy] = useState(false);
   const [showLeaveForm, setShowLeaveForm] = useState(false);
   const [payslip, setPayslip] = useState<PayrollRecord | null>(null);
@@ -482,7 +494,7 @@ export default function MyWorkspace({
       <div className="card">
         <div style={{ padding: '0 12px', borderBottom: '1px solid #E5E9F2', display: 'flex', gap: 4, overflowX: 'auto' }}>
           {TABS.map((t) => (
-            <button key={t.key} className={`tab-btn${tab === t.key ? ' active' : ''}`} style={{ padding: '10px 14px' }} onClick={() => setTab(t.key)}>
+            <button key={t.key} className={`tab-btn${tab === t.key ? ' active' : ''}`} style={{ padding: '10px 14px' }} onClick={() => handleSelectTab(t.key)}>
               {t.label}
               {t.key === 'today' && todayNeedsUpdate > 0 && (
                 <span style={{ marginLeft: 6, background: '#F79009', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 6px' }}>
@@ -517,7 +529,7 @@ export default function MyWorkspace({
                     </div>
                   ))}
                   {myLeaves.length === 0 && <div style={{ fontSize: 12.5, color: '#697586' }}>No leave requests yet.</div>}
-                  <button className="btn-secondary" style={{ fontSize: 12, marginTop: 10 }} onClick={() => { setTab('leave'); setShowLeaveForm(true); }}>
+                  <button className="btn-secondary" style={{ fontSize: 12, marginTop: 10 }} onClick={() => { handleSelectTab('leave'); setShowLeaveForm(true); }}>
                     + Apply for Leave
                   </button>
                 </div>

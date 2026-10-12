@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../db/database';
-import { pendingRequests } from '../utils/attendanceTimes';
+import { pendingRequests, isDueOn, isTaskDone, toLocalDate } from '../utils/attendanceTimes';
 import logo from '../assets/legendary-one-logo.png';
 import MobileShell, { type NavEntry } from './MobileShell';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -12,7 +12,8 @@ type NavScreen =
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses' | 'profile' | 'employee-profile';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses' | 'profile' | 'employee-profile'
+  | 'ws:today' | 'ws:tasks' | 'ws:leave' | 'ws:salary';
 
 interface Props {
   current: string;
@@ -71,6 +72,26 @@ export default function Layout({ current, onNav, children }: Props) {
   const liveQuotations = useLiveQuery(() => db.quotations.toArray(), []) || [];
   const livePayments = useLiveQuery(() => db.payments.toArray(), []) || [];
   const liveEmployees = useLiveQuery(() => db.employees.toArray(), []) || [];
+  const liveTasks = useLiveQuery(() => db.tasks.toArray(), []) || [];
+
+  const todayStr = toLocalDate(new Date());
+  const empId = myEmployee?.id !== undefined ? String(myEmployee.id) : '';
+  const empName = myEmployee?.name || '';
+  const myTodayTasks = useMemo(() => {
+    if (!myEmployee) return [];
+    return liveTasks.filter((t) => {
+      const assigned =
+        (t.assignedToId !== undefined && String(t.assignedToId) === empId) ||
+        (!!empName && (t.assignedTo === empName || t.assignee === empName));
+      return assigned && isDueOn(t, todayStr);
+    });
+  }, [liveTasks, myEmployee, empId, empName, todayStr]);
+
+  const todayBadgeCount = useMemo(() => {
+    const needingUpdate = myTodayTasks.filter((t) => !isTaskDone(t) && t.progressUpdatedOn !== todayStr).length;
+    if (needingUpdate > 0) return needingUpdate;
+    return myTodayTasks.filter((t) => !isTaskDone(t)).length || myTodayTasks.length;
+  }, [myTodayTasks, todayStr]);
 
   // Ctrl+K Shortcut & Escape Handler
   useEffect(() => {
@@ -143,6 +164,17 @@ export default function Layout({ current, onNav, children }: Props) {
         .slice(0, 8)
     : [];
 
+  /** Employee specific menu items when in self-service mode */
+  const employeeNavItems: ({ section: string } | { key: NavScreen; label: string; icon: string; badge?: number })[] = [
+    { section: 'My Workspace' },
+    { key: 'dashboard', label: 'Overview', icon: '⊞' },
+    { key: 'ws:today', label: "Today's Tasks", icon: '✓', badge: todayBadgeCount },
+    { key: 'ws:tasks', label: 'All My Tasks', icon: '📋' },
+    { key: 'ws:leave', label: 'My Leave', icon: '◶' },
+    { key: 'ws:salary', label: 'My Salary', icon: '₹' },
+    ...(myEmployee ? [{ key: 'my-attendance' as NavScreen, label: 'My Attendance', icon: '◷' }] : []),
+  ];
+
   /** Same visibility rules as the desktop sidebar, flattened for the mobile drawer */
   const isNavItemVisible = (key: string) => {
     if (!canAccessScreen(key)) return false;
@@ -150,17 +182,28 @@ export default function Layout({ current, onNav, children }: Props) {
     if (key === 'my-attendance' && !myEmployee) return false;
     return true;
   };
-  const navEntries: NavEntry[] = [];
+  const standardNavEntries: NavEntry[] = [];
   nav.forEach((item) => {
     if ('section' in item) {
-      navEntries.push({ section: item.section as string });
+      standardNavEntries.push({ section: item.section as string });
     } else if (isNavItemVisible(item.key!)) {
-      navEntries.push({ key: item.key!, label: item.key === 'dashboard' && isSelfService ? 'My Dashboard' : item.label! });
+      standardNavEntries.push({ key: item.key!, label: item.key === 'dashboard' && isSelfService ? 'My Dashboard' : item.label! });
     }
   });
-  const visibleNavEntries = navEntries.filter(
-    (e, i) => !('section' in e) || (navEntries[i + 1] !== undefined && !('section' in navEntries[i + 1]))
-  );
+
+  const visibleNavEntries: NavEntry[] = isSelfService
+    ? [
+        { section: 'My Workspace' },
+        { key: 'dashboard', label: 'Overview' },
+        { key: 'ws:today', label: "Today's Tasks", badge: todayBadgeCount },
+        { key: 'ws:tasks', label: 'All My Tasks' },
+        { key: 'ws:leave', label: 'My Leave' },
+        { key: 'ws:salary', label: 'My Salary' },
+        ...(myEmployee ? [{ key: 'my-attendance', label: 'My Attendance' }] : []),
+      ]
+    : standardNavEntries.filter(
+        (e, i) => !('section' in e) || (standardNavEntries[i + 1] !== undefined && !('section' in standardNavEntries[i + 1]))
+      );
 
   if (isMobile) {
     return (
@@ -205,24 +248,29 @@ export default function Layout({ current, onNav, children }: Props) {
 
         {/* Navigation Menu */}
         <nav style={{ padding: '10px 10px', flex: 1 }}>
-          {nav.map((item, i) => {
+          {(isSelfService ? employeeNavItems : nav).map((item, i) => {
             if ('section' in item) {
+              if (isSelfService) {
+                return <div key={`s-${i}`} className="sidebar-section">{item.section}</div>;
+              }
               // Hide section headings that have no visible items under them
               const nextSection = nav.findIndex((n, j) => j > i && 'section' in n);
               const items = nav.slice(i + 1, nextSection === -1 ? undefined : nextSection);
               const anyVisible = items.some((n) => 'key' in n && n.key && canAccessScreen(n.key));
               return anyVisible ? <div key={i} className="sidebar-section">{item.section}</div> : null;
             }
-            if (!canAccessScreen(item.key!)) {
-              return null;
-            }
-            // Employees' Dashboard is already their workspace; others get it when linked to an employee
-            if (item.key === 'my-workspace' && (isSelfService || !myEmployee)) {
-              return null;
-            }
-            // Own check-in / attendance page for anyone linked to an employee record
-            if (item.key === 'my-attendance' && !myEmployee) {
-              return null;
+            if (!isSelfService) {
+              if (!canAccessScreen(item.key!)) {
+                return null;
+              }
+              // Employees' Dashboard is already their workspace; others get it when linked to an employee
+              if (item.key === 'my-workspace' && (isSelfService || !myEmployee)) {
+                return null;
+              }
+              // Own check-in / attendance page for anyone linked to an employee record
+              if (item.key === 'my-attendance' && !myEmployee) {
+                return null;
+              }
             }
             const label = item.key === 'dashboard' && isSelfService ? 'My Dashboard' : item.label;
             return (
@@ -239,6 +287,14 @@ export default function Layout({ current, onNav, children }: Props) {
                     style={{ marginLeft: 'auto', background: '#F79009', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 7px' }}
                   >
                     {pendingAttendanceCount}
+                  </span>
+                )}
+                {'badge' in item && typeof item.badge === 'number' && item.badge > 0 && (
+                  <span
+                    title={`${item.badge} task(s)`}
+                    style={{ marginLeft: 'auto', background: '#F79009', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 7px' }}
+                  >
+                    {item.badge}
                   </span>
                 )}
               </div>

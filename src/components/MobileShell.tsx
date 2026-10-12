@@ -42,12 +42,16 @@ import { useInstallPrompt } from '../pwa';
 import { formatTime12h, toLocalDate, isCheckedIn } from '../utils/attendanceTimes';
 import logo from '../assets/legendary-one-logo.png';
 
-export type NavEntry = { key: string; label: string } | { section: string };
+export type NavEntry = { key: string; label: string; badge?: number } | { section: string };
 
 export const NAV_ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
   'my-workspace': Sparkles,
   'my-attendance': Fingerprint,
+  'ws:today': CalendarCheck,
+  'ws:tasks': ListChecks,
+  'ws:leave': Plane,
+  'ws:salary': Banknote,
   leads: Target,
   clients: Users,
   projects: FolderKanban,
@@ -83,6 +87,10 @@ const EXTRA_TITLES: Record<string, string> = {
   'employee-profile': 'Employee Profile',
   'client-profile': 'Client',
   'project-detail': 'Project',
+  'ws:today': "Today's Tasks",
+  'ws:tasks': 'All My Tasks',
+  'ws:leave': 'My Leave',
+  'ws:salary': 'My Salary',
 };
 
 interface Props {
@@ -210,7 +218,8 @@ export default function MobileShell(props: Props) {
   const right: Tab[] = [];
   left.push({ key: 'dashboard', label: 'Home' });
   if (isSelfService) {
-    left.push({ key: 'tasks', label: 'Tasks' });
+    const todayEntry = navEntries.find((e) => 'key' in e && e.key === 'ws:today') as { key: string; label: string; badge?: number } | undefined;
+    left.push({ key: 'ws:today', label: 'Tasks', badge: todayEntry?.badge });
     right.push({ key: 'profile', label: 'Profile' });
   } else {
     const second = pick('projects', 'clients', 'tasks');
@@ -392,6 +401,7 @@ export default function MobileShell(props: Props) {
                     </span>
                     <span style={{ flex: 1, textAlign: 'left' }}>{entry.label}</span>
                     {entry.key === 'attendance' && !isSelfService && pendingAttendanceCount > 0 && <span className="m-pill-badge">{pendingAttendanceCount}</span>}
+                    {'badge' in entry && typeof entry.badge === 'number' && entry.badge > 0 && <span className="m-pill-badge">{entry.badge}</span>}
                   </button>
                 );
               })()

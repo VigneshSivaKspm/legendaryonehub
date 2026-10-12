@@ -111,12 +111,29 @@ function MainApp() {
   };
   const nav = (s: string) => {
     if (s === 'login') return;
+    // ws:<tab> shortcuts navigate to MyWorkspace with a specific tab open
+    if (s.startsWith('ws:')) {
+      const tab = s.slice(3) as WorkspaceTab;
+      setWorkspaceTab((w) => ({ tab, n: w.n + 1 }));
+      go(isSelfService ? 'dashboard' : 'my-workspace');
+      return;
+    }
+    if (s === 'dashboard' && isSelfService) {
+      setWorkspaceTab((w) => ({ tab: 'overview', n: w.n + 1 }));
+      go('dashboard');
+      return;
+    }
     setWorkspaceTab((w) => ({ tab: 'overview', n: w.n + 1 }));
     go(s as AppScreen);
   };
   const workspaceScreen: AppScreen = isSelfService ? 'dashboard' : 'my-workspace';
   const workspace = (
-    <MyWorkspace key={workspaceTab.n} initialTab={workspaceTab.tab} onOpenAttendance={() => go('my-attendance')} />
+    <MyWorkspace
+      key={workspaceTab.n}
+      initialTab={workspaceTab.tab}
+      onTabChange={(t) => setWorkspaceTab((w) => ({ ...w, tab: t }))}
+      onOpenAttendance={() => go('my-attendance')}
+    />
   );
 
   const renderScreen = () => {
@@ -230,8 +247,13 @@ function MainApp() {
     }
   };
 
+  const currentNav =
+    isSelfService && screen === 'dashboard' && workspaceTab.tab !== 'overview'
+      ? `ws:${workspaceTab.tab}`
+      : screen;
+
   return (
-    <Layout current={screen} onNav={nav}>
+    <Layout current={currentNav} onNav={nav}>
       {renderScreen()}
     </Layout>
   );
