@@ -1,0 +1,151 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function myProfilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function myRole() {
+      return string(get(myProfilePath()).data.get('role', '')).lower();
+    }
+
+    // A workspace member has a profile created by an admin (or pre-provisioned for their
+    // email) and is not disabled. Signing up through Firebase Auth alone is NOT enough.
+    function isWorkspaceMember() {
+      return isAuthenticated()
+        && exists(myProfilePath())
+        && get(myProfilePath()).data.get('status', 'Active') != 'Disabled';
+    }
+
+    // Same rule as the app (authService.isOwnerOrAdminRole): any role containing owner / admin
+    function isOwnerOrAdmin() {
+      return isWorkspaceMember() && myRole().matches('.*(owner|admin).*');
+    }
+
+    // People who run the business side: owners, admins, project managers and accountants
+    function isManager() {
+      return isWorkspaceMember() && myRole().matches('.*(owner|admin|project manager|accountant).*');
+    }
+
+    function signedInEmail() {
+      return request.auth.token.email;
+    }
+
+    // Default deny for anything not listed below
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------------
+    // User accounts. Roles and status can only be changed by Owners/Admins.
+    // ---------------------------------------------------------------------------
+    match /users/{userId} {
+      // Members see the team; a new sign-in may read its own profile and the profile an
+      // admin pre-provisioned for its email (needed to link the account on first login)
+      allow read: if isWorkspaceMember()
+        || (isAuthenticated() && request.auth.uid == userId)
+        || (isAuthenticated() && resource.data.email == signedInEmail());
+
+      allow write: if isOwnerOrAdmin();
+
+      // First sign-in of a pre-provisioned person: copy the role the admin assigned to this
+      // email (placeholder doc id in provisionedFrom). Self sign-ups get no profile.
+      allow create: if isAuthenticated() && request.auth.uid == userId
+        && request.resource.data.keys().hasAll(['provisionedFrom'])
+        && get(/databases/$(database)/documents/users/$(request.resource.data.provisionedFrom)).data.email == signedInEmail()
+        && get(/databases/$(database)/documents/users/$(request.resource.data.provisionedFrom)).data.role == request.resource.data.role;
+
+      // Your own profile: anything except role/status; the employee link can only be set once
+      allow update: if isAuthenticated() && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['employeeId'])
+            || resource.data.get('employeeId', '') == '');
+
+      // Remove the pre-provisioned placeholder for your email once your real profile exists
+      allow delete: if isAuthenticated() && userId != request.auth.uid
+        && resource.data.email == signedInEmail();
+    }
+
+    // ---------------------------------------------------------------------------
+    // Day-to-day work: every member (employees check in, update tasks, request leave)
+    // ---------------------------------------------------------------------------
+    match /clients/{id} { allow read, write: if isWorkspaceMember(); }
+    match /leads/{id} { allow read, write: if isWorkspaceMember(); }
+    match /projects/{id} { allow read, write: if isWorkspaceMember(); }
+    match /tasks/{id} { allow read, write: if isWorkspaceMember(); }
+    match /deliverables/{id} { allow read, write: if isWorkspaceMember(); }
+    match /timesheets/{id} { allow read, write: if isWorkspaceMember(); }
+    match /attendance/{id} { allow read, write: if isWorkspaceMember(); }
+    match /leaveRequests/{id} { allow read, write: if isWorkspaceMember(); }
+    match /leave/{id} { allow read, write: if isWorkspaceMember(); }
+    match /projectActivity/{id} { allow read, write: if isWorkspaceMember(); }
+    match /projectMilestones/{id} { allow read, write: if isWorkspaceMember(); }
+    match /projectFiles/{id} { allow read, write: if isWorkspaceMember(); }
+    match /documents/{id} { allow read, write: if isWorkspaceMember(); }
+    match /assets/{id} { allow read, write: if isWorkspaceMember(); }
+    match /companyAssets/{id} { allow read, write: if isWorkspaceMember(); }
+
+    // ---------------------------------------------------------------------------
+    // Money & HR: members can read (employees see their own payslips in My Workspace),
+    // only managers can change anything
+    // ---------------------------------------------------------------------------
+    match /invoices/{id} { allow read: if isWorkspaceMember(); allow write: if isManager(); }
+    match /payments/{id} { allow read: if isWorkspaceMember(); allow write: if isManager(); }
+    match /expenses/{id} { allow read: if isWorkspaceMember(); allow write: if isManager(); }
+    match /quotations/{id} { allow read: if isWorkspaceMember(); allow write: if isManager(); }
+    match /payroll/{id} { allow read: if isWorkspaceMember(); allow write: if isManager(); }
+    match /payrollAdjustments/{id} { allow read: if isWorkspaceMember(); allow write: if isManager(); }
+    match /services/{id} { allow read: if isWorkspaceMember(); allow write: if isManager(); }
+
+    match /employees/{id} {
+      allow read: if isWorkspaceMember();
+      allow write: if isManager();
+      // On first login an employee links their own record to their account (userId only)
+      allow update: if isWorkspaceMember()
+        && resource.data.email == signedInEmail()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['userId']);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Workspace settings
+    // ---------------------------------------------------------------------------
+    match /rolePermissions/{id} { allow read: if isWorkspaceMember(); allow write: if isOwnerOrAdmin(); }
+    match /billingSettings/{id} { allow read: if isWorkspaceMember(); allow write: if isOwnerOrAdmin(); }
+
+    // The app listens to the whole collection, so reads can't be limited by document id
+    match /notificationSettings/{id} {
+      allow read: if isWorkspaceMember();
+      allow write: if isOwnerOrAdmin() && id == 'default';
+    }
+
+    match /companyProfile/{id} {
+      allow read: if isWorkspaceMember();
+      allow write: if isOwnerOrAdmin();
+    }
+
+    // Client / project logins: Owners & Admins only
+    match /projectCredentials/{id} {
+      allow read, write: if isOwnerOrAdmin();
+    }
+
+    // Integrations (Google Drive folder + OAuth client ID). Members may record the shared
+    // folder / connected account when they first use Drive; only admins change anything else.
+    match /integrations/{id} {
+      allow read: if isWorkspaceMember();
+      allow create: if isOwnerOrAdmin()
+        || (isWorkspaceMember() && request.resource.data.keys().hasOnly(['folderId', 'folderLink', 'connectedEmail', 'updatedAt']));
+      allow update: if isOwnerOrAdmin()
+        || (isWorkspaceMember() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['folderId', 'folderLink', 'connectedEmail', 'updatedAt']));
+    }
+  }
+}

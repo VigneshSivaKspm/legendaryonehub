@@ -1,0 +1,937 @@
+Create a premium, modern, professional web-based business management application for:
+
+LEGENDARY ONE TECHNOLOGIES
+
+Tagline:
+Where Innovation Meets Excellence
+
+The application is an internal CRM + ERP + Project Management + Employee Management + Billing system for an IT and digital services company.
+
+The company handles around 30–40 clients and provides services including:
+
+• Website Development
+• Software Development
+• Mobile App Development
+• Graphic / Poster Design
+• Video Editing
+• Digital Marketing
+• Organic Marketing
+• Branding
+• Maintenance and other IT services
+
+The software should allow the owner to manage the entire company from one place.
+
+==================================================
+DESIGN STYLE
+==================================================
+
+Create a polished 2026 SaaS-style interface.
+
+The UI should feel premium, professional, simple and production-ready.
+
+Visual direction:
+
+• Clean light theme
+• White cards
+• Very light grey background
+• Deep blue / indigo primary colour
+• Cyan / teal secondary accent
+• Green for success
+• Amber for warning
+• Red only for overdue/errors
+• Dark charcoal text
+• Modern professional typography
+• Soft shadows
+• 12–16px rounded corners
+• Clean icons
+• Spacious layouts
+• Strong hierarchy
+• Subtle animations and interactions
+
+Use inspiration from modern SaaS tools such as:
+
+Stripe
+Linear
+HubSpot
+ClickUp
+Notion
+Zoho
+
+Do not directly copy them.
+
+Avoid:
+
+• Clutter
+• Excessive gradients
+• Too many colours
+• Cartoon styling
+• Huge unnecessary cards
+• Old-fashioned admin-dashboard appearance
+
+Use reusable Figma components and Auto Layout throughout.
+
+==================================================
+APPLICATION LAYOUT
+==================================================
+
+Create a desktop-first responsive web application.
+
+Use a fixed left sidebar and top navigation.
+
+LEFT SIDEBAR:
+
+Dashboard
+
+CRM
+• Leads
+• Clients
+
+Work
+• Projects
+• Tasks
+• Deliverables
+
+Sales & Finance
+• Quotations
+• Invoices
+• Payments
+• Expenses
+
+Team
+• Employees
+• Attendance
+• Timesheets
+• Leave
+• Payroll
+
+Business
+• Services
+• Assets
+• Documents
+• Reports
+
+Settings
+
+At the bottom:
+
+• Help
+• User Profile
+• Logout
+
+TOP BAR:
+
+• Global Search
+• Quick Add +
+• Notifications
+• Current Financial Year
+• User Profile
+
+==================================================
+MAIN DASHBOARD
+==================================================
+
+Create a clean executive dashboard.
+
+Header:
+
+Good Morning
+Here’s what’s happening at Legendary One Technologies.
+
+Main KPI cards:
+
+Total Clients — 38
+
+Active Projects — 21
+
+Monthly Revenue — ₹2,45,800
+
+Pending Payments — ₹87,500
+
+Monthly Expenses — ₹64,200
+
+Net Profit — ₹1,81,600
+
+Then show:
+
+Revenue vs Expenses graph
+
+Project Status overview
+
+Outstanding Payments
+
+Recent Payments
+
+Today's Tasks
+
+Employee Attendance Summary
+
+Recent Business Activity
+
+Do not overcrowd the dashboard.
+
+Show the most important information first and place secondary details further down.
+
+==================================================
+CLIENT MANAGEMENT
+==================================================
+
+Create a Clients page with:
+
+• Search
+• Filters
+• Add Client
+• Export
+• Table / Card View
+
+Client table:
+
+Client Name
+Company
+Contact
+Service
+Billing Type
+Total Value
+Paid
+Pending
+Active Projects
+Status
+
+Example clients:
+
+GS Distributors
+Temple India
+Karthikeyan Analysis
+Nesam Tours & Travels
+Meetube
+
+Create a detailed Client Profile screen.
+
+Client Profile should include:
+
+• Contact information
+• GST information
+• Services used
+• Total business value
+• Amount received
+• Pending payment
+• Active projects
+• Completed projects
+
+Tabs:
+
+Overview
+Projects
+Requirements
+Deliverables
+Payments
+Quotations
+Invoices
+Documents
+Activity
+
+==================================================
+DELIVERABLE TRACKING
+==================================================
+
+This is one of the most important modules.
+
+The company provides recurring poster, banner, video and design work to some clients.
+
+The application must track exactly how much work has been delivered.
+
+Example:
+
+Client:
+GS Distributors
+
+Billing Period:
+01/09/2026 – 30/09/2026
+
+Posters Delivered — 76
+Rate — ₹18 each
+Total — ₹1,368
+
+Videos Delivered — 2
+Rate — ₹100 each
+Total — ₹200
+
+Banners Delivered — 2
+Rate — ₹50 each
+Total — ₹100
+
+Grand Total:
+₹1,668
+
+Allow the admin to add:
+
+Deliverable Type
+Description
+Quantity
+Unit Rate
+Date
+Employee
+Approval Status
+Attachment
+Notes
+
+Automatically calculate totals.
+
+Show historical deliverables by client and billing period.
+
+==================================================
+LEADS / CRM
+==================================================
+
+Create a modern Kanban-style lead pipeline.
+
+Stages:
+
+New Enquiry
+
+Contacted
+
+Requirement Collected
+
+Quotation Sent
+
+Negotiation
+
+Converted
+
+Lost
+
+Lead details:
+
+Name
+Company
+Phone
+Email
+Required Service
+Budget
+Lead Source
+Assigned Person
+Follow-up Date
+Notes
+
+==================================================
+PROJECT MANAGEMENT
+==================================================
+
+Projects page should show:
+
+Project Name
+Client
+Service
+Project Manager
+Team
+Start Date
+Deadline
+Project Value
+Amount Received
+Pending Amount
+Progress
+Status
+
+Statuses:
+
+Planning
+In Progress
+Waiting for Client
+Testing
+Revision
+Completed
+On Hold
+
+Project Detail screen tabs:
+
+Overview
+Tasks
+Milestones
+Team
+Requirements
+Files
+Payments
+Activity
+
+Show:
+
+Project progress
+
+Project Value
+
+Received Amount
+
+Pending Amount
+
+Expenses
+
+Estimated Profit
+
+==================================================
+TASK MANAGEMENT
+==================================================
+
+Support:
+
+List View
+
+Kanban Board
+
+Calendar View
+
+Task information:
+
+Task
+Project
+Client
+Assigned Employee
+Priority
+Start Date
+Deadline
+Estimated Hours
+Logged Hours
+Status
+
+Priority:
+
+Low
+Medium
+High
+Urgent
+
+==================================================
+QUOTATIONS
+==================================================
+
+Create professional quotation management.
+
+Quotation list:
+
+Quotation Number
+Client
+Project
+Date
+Validity
+Amount
+GST
+Grand Total
+Status
+
+Quotation editor:
+
+Client Details
+
+Service / Project
+
+Line Items
+
+Description
+Quantity
+Rate
+Amount
+
+Subtotal
+
+Discount
+
+CGST / SGST / IGST
+
+Grand Total
+
+Terms & Conditions
+
+Notes
+
+Actions:
+
+Save Draft
+Preview
+Download PDF
+Send
+Convert to Project
+Convert to Invoice
+
+==================================================
+INVOICES & GST
+==================================================
+
+Create GST invoice management.
+
+Invoice information:
+
+Invoice Number
+Date
+Client
+GSTIN
+Project
+Items
+Tax
+Grand Total
+Paid
+Balance
+Due Date
+
+Statuses:
+
+Draft
+Sent
+Partially Paid
+Paid
+Overdue
+
+Actions:
+
+Preview
+Download
+Print
+Send
+Record Payment
+
+Use Indian GST concepts.
+
+==================================================
+PAYMENTS
+==================================================
+
+Track all payments received from clients.
+
+Payment fields:
+
+Payment ID
+Client
+Invoice
+Project
+Amount
+Payment Date
+Payment Method
+Reference
+Status
+
+Payment methods:
+
+Cash
+UPI
+Bank Transfer
+Cheque
+Card
+Other
+
+Support partial payments.
+
+Show each client's payment history.
+
+==================================================
+MILESTONE BILLING
+==================================================
+
+For software and website projects, support milestone payments.
+
+Example:
+
+Project Value — ₹1,20,000
+
+Advance — 30% — ₹36,000 — Received
+
+UI Design Completion — 20% — ₹24,000 — Received
+
+Development Completion — 30% — ₹36,000 — Pending
+
+Final Delivery — 20% — ₹24,000 — Pending
+
+Show visual milestone progress.
+
+==================================================
+EMPLOYEE MANAGEMENT
+==================================================
+
+Create Employee Management.
+
+Employee table:
+
+Employee
+Employee ID
+Role
+Department
+Phone
+Joining Date
+Salary
+Current Projects
+Status
+
+Employee Profile tabs:
+
+Overview
+Attendance
+Timesheets
+Projects
+Tasks
+Salary
+Leave
+Documents
+
+==================================================
+ATTENDANCE
+==================================================
+
+Create a monthly attendance calendar.
+
+Statuses:
+
+Present
+Absent
+Leave
+Half Day
+Work From Home
+Holiday
+
+Show:
+
+Check In
+Check Out
+Working Hours
+Overtime
+
+Monthly summary:
+
+Working Days
+Present
+Absent
+Leave
+Total Hours
+
+==================================================
+TIMESHEETS
+==================================================
+
+Employees should record:
+
+Date
+Client
+Project
+Task
+Start Time
+End Time
+Total Hours
+Description
+
+Admin should be able to see which employee worked on which project and for how many hours.
+
+==================================================
+PAYROLL
+==================================================
+
+Track employee salary.
+
+Show:
+
+Base Salary
+Attendance
+Leave Deduction
+Bonus
+Incentive
+Advance
+Other Deduction
+Net Salary
+
+Statuses:
+
+Pending
+Processed
+Paid
+
+Maintain salary payment history.
+
+==================================================
+EXPENSE MANAGEMENT
+==================================================
+
+Create company expense tracking.
+
+Categories:
+
+Office Rent
+Office Advance
+Electricity
+Wi-Fi
+Software Subscription
+Hosting
+Domain
+Cloud / Firebase
+Marketing
+Travel
+Furniture
+Equipment
+Maintenance
+Salary
+Other
+
+Expense fields:
+
+Expense
+Category
+Amount
+Date
+Paid To
+Payment Method
+Project
+Client
+Receipt
+Notes
+
+Dashboard should show:
+
+Monthly Expenses
+Recurring Expenses
+Project Expenses
+Asset Purchases
+
+Include an expense category chart.
+
+==================================================
+ASSET MANAGEMENT
+==================================================
+
+Track company assets.
+
+Examples:
+
+Laptop
+Desktop
+Monitor
+Table
+Chair
+Router
+Printer
+UPS
+Camera
+
+Show:
+
+Asset
+Category
+Purchase Price
+Date
+Vendor
+Warranty
+Assigned Employee
+Condition
+
+==================================================
+REPORTS
+==================================================
+
+Create an analytics and reports section.
+
+Reports should include:
+
+Revenue
+
+Expenses
+
+Profit & Loss
+
+Outstanding Payments
+
+Client Revenue
+
+Service Revenue
+
+Project Profitability
+
+Employee Productivity
+
+Attendance
+
+Payroll
+
+GST
+
+Payments
+
+Use modern charts and clear tables.
+
+==================================================
+GLOBAL SEARCH
+==================================================
+
+Create Ctrl + K global search.
+
+Allow searching:
+
+Clients
+Projects
+Employees
+Invoices
+Quotations
+Payments
+Tasks
+Documents
+
+==================================================
+QUICK ADD
+==================================================
+
+Create a + Quick Add menu with:
+
+New Lead
+
+New Client
+
+New Project
+
+New Task
+
+New Deliverable
+
+New Quotation
+
+New Invoice
+
+Record Payment
+
+Add Expense
+
+Add Employee
+
+==================================================
+USER ROLES
+==================================================
+
+Support:
+
+Owner / Super Admin
+
+Admin
+
+Project Manager
+
+Employee
+
+Accountant
+
+Owner has complete access.
+
+Employees only see assigned work, tasks, attendance and timesheets.
+
+Accountants primarily access invoices, payments, expenses and reports.
+
+==================================================
+FIRST FIGMA GENERATION
+==================================================
+
+For the first generation, create high-fidelity designs for ONLY these core screens:
+
+1. Login
+
+2. Main Dashboard
+
+3. Clients List
+
+4. Client Profile
+
+5. Deliverables Management
+
+6. Leads Pipeline
+
+7. Projects List
+
+8. Project Details
+
+9. Quotations
+
+10. Invoices
+
+11. Payments
+
+12. Employees
+
+13. Expenses
+
+14. Financial Reports
+
+15. Settings
+
+Create the other modules as navigation items, but do not create every detailed screen yet.
+
+==================================================
+IMPORTANT UX RULE
+==================================================
+
+Do not place every available metric on every screen.
+
+Prioritize information.
+
+Each page should have:
+
+• One clear page title
+• 3–5 important summary metrics maximum
+• Primary action button
+• Search / filtering when required
+• Main table, cards or workspace
+• Secondary information below
+
+Use progressive disclosure:
+
+Simple overview first.
+
+Detailed information should appear inside tabs, drawers, modals or detail screens.
+
+==================================================
+FINAL PRODUCT VISION
+==================================================
+
+This should feel like a custom business operating system for Legendary One Technologies.
+
+The owner should be able to immediately understand:
+
+How many clients are active?
+
+What projects are currently running?
+
+What work has been delivered?
+
+How much should clients pay?
+
+How much money has been received?
+
+What payments are pending?
+
+What invoices are overdue?
+
+What is monthly revenue?
+
+What are company expenses?
+
+What is current profit?
+
+Which employee worked on each project?
+
+How many hours did they work?
+
+Who is present or absent?
+
+How much salary has been paid?
+
+What quotations, invoices and documents belong to each client?
+
+What requires attention today?
+
+Create a highly polished, realistic and production-ready SaaS interface.
+
+Use:
+
+₹ Indian Rupee
+
+DD/MM/YYYY date format
+
+Indian GST terminology
+
+Realistic Indian business data
+
+The product should feel powerful but very easy to understand.
+
+Do not make individual UI elements unnecessarily large.
+
+Keep cards, icons, tables, buttons, inputs and typography at balanced professional sizes.
+
+Aim for medium-density information presentation suitable for regular office use on a laptop or desktop.

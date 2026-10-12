@@ -1,0 +1,1013 @@
+import Dexie, { type Table } from 'dexie';
+
+export interface User {
+  id?: number | string;
+  email: string;
+  name: string;
+  role: 'Owner' | 'Super Admin' | 'Owner / Super Admin' | 'Admin' | 'Project Manager' | 'Employee' | 'Accountant' | string;
+  dept?: string;
+  avatarInitials?: string;
+  employeeId?: string | number;
+  employeeName?: string;
+  status?: 'Active' | 'Disabled';
+  passwordHash?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Client {
+  id?: number | string;
+  name: string;
+  company: string;
+  contact: string;
+  phone: string;
+  email: string;
+  address: string;
+  city: string;
+  gstin?: string;
+  services: string;
+  billing: 'Monthly Retainer' | 'One-Time' | 'Fixed Price' | 'Per Unit' | 'Milestone' | 'Hourly';
+  pricing: number;
+  totalValue: number;
+  paid: number;
+  pending: number;
+  projects: number;
+  joinDate: string;
+  status: 'Active' | 'Inactive' | 'Archived';
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  createdUserId?: string;
+}
+
+export interface CompanyService {
+  id?: number | string;
+  name: string;
+  description: string;
+  pricingType: 'Monthly Retainer' | 'One-Time' | 'Fixed Price' | 'Per Unit' | 'Milestone' | 'Hourly';
+  defaultPrice: number;
+  status: 'Active' | 'Inactive' | 'Archived';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Project {
+  id?: number | string;
+  name: string;
+  clientId: number | string;
+  clientName: string;
+  serviceId?: number | string;
+  serviceName: string;
+  manager: string;
+  team: string[];
+  startDate: string;
+  deadline: string;
+  value: number;
+  received: number;
+  pending: number;
+  expenses: number;
+  estimatedProfit: number;
+  progress: number;
+  status: 'Planning' | 'In Progress' | 'Waiting for Client' | 'Testing' | 'Revision' | 'Completed' | 'Maintenance' | 'On Hold' | 'Cancelled' | 'Archived';
+  notes?: string;
+  requirements?: string;
+  /** Domain name(s) for the project, comma separated */
+  domain?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  createdUserId?: string;
+}
+
+export interface ProjectTask {
+  id?: number | string;
+  projectId?: number | string;
+  task?: string;
+  title?: string;
+  description?: string;
+  project?: string;
+  projectName?: string;
+  client?: string;
+  assignee?: string;
+  assignedTo?: string;
+  assignedToId?: number | string;
+  priority?: 'Urgent' | 'High' | 'Medium' | 'Low';
+  start?: string;
+  deadline?: string;
+  dueDate?: string;
+  estimated?: number;
+  logged?: number;
+  status?: 'Pending' | 'In Progress' | 'Completed' | 'To Do' | 'Review' | 'Done';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectMilestone {
+  id?: number | string;
+  projectId: number | string;
+  label: string;
+  amount: number;
+  pct: number;
+  status: 'Received' | 'Pending';
+  date: string;
+  createdAt?: string;
+}
+
+export interface ProjectFile {
+  id?: number | string;
+  projectId: number | string;
+  name: string;
+  size: string;
+  uploadedBy: string;
+  date: string;
+  type: string;
+  url?: string;
+  createdAt?: string;
+}
+
+export interface ProjectActivity {
+  id?: number | string;
+  projectId?: number | string;
+  clientId?: number | string;
+  title: string;
+  user: string;
+  timestamp: string;
+  type?: string;
+  createdAt?: string;
+}
+
+export interface Invoice {
+  id?: number | string;
+  invoiceNumber: string;
+  date: string;
+  clientId?: number | string;
+  clientName: string;
+  gstin?: string;
+  projectId?: number | string;
+  projectName?: string;
+  itemsCount?: number;
+  taxAmount?: number;
+  totalAmount: number;
+  paidAmount: number;
+  balance: number;
+  dueDate: string;
+  status: 'Draft' | 'Sent' | 'Paid' | 'Partially Paid' | 'Overdue' | 'Cancelled';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Payment {
+  id?: number | string;
+  paymentNumber: string;
+  clientName: string;
+  clientId?: number | string;
+  invoiceNumber?: string;
+  invoiceId?: number | string;
+  projectId?: number | string;
+  projectName?: string;
+  amount: number;
+  date: string;
+  method: 'Bank Transfer' | 'UPI' | 'Cheque' | 'Cash' | 'Card' | string;
+  referenceNumber?: string;
+  status: 'Confirmed' | 'Pending' | 'Failed';
+  createdAt?: string;
+}
+
+export interface Expense {
+  id?: number | string;
+  expenseNumber: string;
+  name: string;
+  category: string;
+  amount: number;
+  date: string;
+  paidTo?: string;
+  method?: string;
+  projectId?: number | string;
+  projectName?: string;
+  clientId?: number | string;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface Employee {
+  id?: number | string;
+  employeeId: string;
+  name: string;
+  role: string;
+  dept: string;
+  phone: string;
+  email: string;
+  joiningDate: string;
+  salary: number;
+  status: 'Active' | 'On Leave' | 'Inactive';
+  /** App access role used for login permissions (separate from the job title in `role`) */
+  accessRole?: EmployeeAccessRole;
+  /** Firebase Auth uid of the linked login, when one has been created */
+  userId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type EmployeeAccessRole = 'Employee' | 'Project Manager' | 'Accountant' | 'Admin';
+
+export const EMPLOYEE_ACCESS_ROLES: EmployeeAccessRole[] = ['Employee', 'Project Manager', 'Accountant', 'Admin'];
+
+export interface QuotationItem {
+  description: string;
+  qty: number;
+  rate: number;
+  amount: number;
+}
+
+export interface Quotation {
+  id?: number | string;
+  quotationNumber: string;
+  clientName: string;
+  projectName?: string;
+  date: string;
+  validityDate: string;
+  amount: number;
+  discount?: number;
+  gstAmount: number;
+  totalAmount: number;
+  items?: QuotationItem[];
+  lineItems?: QuotationItem[];
+  status: 'Draft' | 'Sent' | 'Negotiation' | 'Converted' | 'Declined';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Lead {
+  id?: number | string;
+  name: string;
+  company: string;
+  phone: string;
+  email: string;
+  service: string;
+  budget?: string;
+  source: string;
+  assignedTo?: string;
+  followUpDate: string;
+  stage: 'New Enquiry' | 'Contacted' | 'Requirement Collected' | 'Quotation Sent' | 'Negotiation' | 'Converted' | 'Lost';
+  notes?: string;
+  createdAt?: string;
+}
+
+/** An employee self-service action that broke an attendance rule and is waiting on an admin. */
+export interface AttendanceApproval {
+  status: 'Pending' | 'Approved' | 'Rejected';
+  /** "HH:mm" the employee checked in / came back from lunch / asked to check out */
+  time: string;
+  /** Rules that were broken, e.g. "Checked in after 9:00 AM" */
+  reasons: string[];
+  /** Employee's explanation */
+  note?: string;
+  requestedAt: string;
+  decidedAt?: string;
+  decidedBy?: string;
+  adminRemarks?: string;
+}
+
+export interface AttendanceRecord {
+  id?: number | string;
+  employeeId?: number | string;
+  employeeCode?: string;
+  employeeName: string;
+  dept?: string;
+  date: string;
+  status: 'Present' | 'Absent' | 'On Leave' | 'Late' | 'Half Day';
+  checkIn?: string;
+  checkOut?: string;
+  lunchOut?: string;
+  lunchIn?: string;
+  overtimeHours?: number;
+  notes?: string;
+  checkInRequest?: AttendanceApproval;
+  lunchRequest?: AttendanceApproval;
+  checkOutRequest?: AttendanceApproval;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Deliverable {
+  id?: number | string;
+  client: string;
+  clientId?: number | string;
+  type: string;
+  description: string;
+  qty: number;
+  rate: number;
+  amount?: number;
+  date: string;
+  employee: string;
+  period?: string;
+  status: 'Approved' | 'Pending';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TimesheetEntry {
+  id?: number | string;
+  employeeId: number | string;
+  employeeName: string;
+  projectId: number | string;
+  projectName: string;
+  date: string;
+  taskDescription: string;
+  startTime: string;
+  endTime: string;
+  breakDurationMinutes?: number;
+  totalHours: number;
+  isBillable: boolean;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface LeaveRequest {
+  id?: number | string;
+  employeeId: number | string;
+  employeeName: string;
+  employeeCode?: string;
+  department?: string;
+  leaveType: 'Casual Leave' | 'Sick Leave' | 'Earned / Paid Leave' | 'Unpaid Leave' | 'Work From Home' | string;
+  fromDate: string;
+  toDate: string;
+  days: number;
+  isHalfDay?: boolean;
+  halfDaySession?: 'Morning' | 'Afternoon' | 'Full Day';
+  reason: string;
+  contactNotes?: string;
+  status: 'Pending' | 'Approved' | 'Rejected';
+  approvedBy?: string;
+  adminRemarks?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PayrollRecord {
+  id?: number | string;
+  employeeId: number | string;
+  employeeName: string;
+  employeeCode?: string;
+  department?: string;
+  role?: string;
+  month: string; // YYYY-MM
+  baseSalary: number;
+  workingDays: number;
+  hasAttendanceData?: boolean;
+  presentDays: number;
+  paidLeaveDays: number;
+  unpaidLeaveDays: number;
+  absentDays: number;
+  allowances: number;
+  bonus: number;
+  overtime: number;
+  unpaidLeaveDeduction: number;
+  otherDeductions: number;
+  totalDeductions: number;
+  grossSalary: number;
+  netSalary: number;
+  status: 'Pending' | 'Paid';
+  paymentDate?: string;
+  paymentMethod?: string;
+  paymentReference?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PayrollAdjustment {
+  id?: string;
+  employeeId: number | string;
+  employeeName: string;
+  type: 'Allowance' | 'Deduction';
+  component: string;
+  amount: number;
+  month: string; // YYYY-MM the adjustment starts in
+  recurring: boolean; // applies to every month from `month` onwards
+  endMonth?: string; // optional last month for recurring entries
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type AssetCategory =
+  | 'Laptop'
+  | 'Desktop'
+  | 'Mobile'
+  | 'Monitor'
+  | 'Printer'
+  | 'Networking'
+  | 'Furniture'
+  | 'Other';
+
+export type AssetStatus = 'Available' | 'Assigned' | 'Under Maintenance' | 'Retired';
+
+export interface AssetHistoryEntry {
+  action: 'Created' | 'Assigned' | 'Reassigned' | 'Returned' | 'Under Maintenance' | 'Retired' | 'Updated';
+  date: string;
+  performedBy?: string;
+  notes?: string;
+  assignedToEmployeeId?: string | number;
+  assignedToEmployeeName?: string;
+}
+
+export interface AssetRecord {
+  id?: string;
+  assetName: string;
+  assetCode: string;
+  category: AssetCategory;
+  brand?: string;
+  model?: string;
+  serialNumber?: string;
+  purchaseDate?: string;
+  purchaseCost: number;
+  warrantyExpiry?: string;
+  status: AssetStatus;
+  assignedEmployeeId?: string | number;
+  assignedEmployeeName?: string;
+  locationDepartment?: string;
+  vendorSupplier?: string;
+  notes?: string;
+  history?: AssetHistoryEntry[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type DocumentType =
+  | 'Agreement'
+  | 'Invoice'
+  | 'Quotation'
+  | 'Contract'
+  | 'Employee Document'
+  | 'ID Proof'
+  | 'Tax / GST'
+  | 'Banking'
+  | 'Project File'
+  | 'Certificate'
+  | 'Other';
+
+export type DocumentCategory =
+  | 'Legal & Compliance'
+  | 'Financial & Tax'
+  | 'Human Resources'
+  | 'Operations & Projects'
+  | 'Client & Sales'
+  | 'Administrative'
+  | 'Other';
+
+export type DocumentRelatedTo = 'Client' | 'Project' | 'Employee' | 'Business' | 'Other';
+
+export type DocumentStatus = 'Active' | 'Expiring Soon' | 'Expired' | 'No Expiry';
+
+export interface DocumentRecord {
+  id?: string;
+  title: string;
+  type: DocumentType;
+  category: DocumentCategory;
+  relatedTo: DocumentRelatedTo;
+  relatedRecordId?: string;
+  relatedRecordName?: string;
+  issueDate?: string;
+  expiryDate?: string;
+  notes?: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  fileUrl: string;
+  storagePath: string;
+  storageProvider?: 'firebase' | 'google-drive';
+  driveFileId?: string;
+  status: DocumentStatus;
+  uploadedByUid?: string;
+  uploadedByName?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RolePermissionConfig {
+  id?: string;
+  roleKey: string;
+  roleName: string;
+  color: string;
+  accessDescription: string;
+  permissions: Record<string, boolean>;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface BillingSettings {
+  id?: string;
+  defaultPaymentTerms: 'Due on Receipt' | '7 Days' | '15 Days' | '30 Days' | '45 Days' | '60 Days';
+  defaultTaxMode: 'Exclusive' | 'Inclusive' | 'None';
+  isGstEnabled: boolean;
+  defaultGstRate: number;
+  isTdsEnabled: boolean;
+  defaultTdsRate: number;
+  currency: string;
+  defaultDueDateOffsetDays: number;
+  enableLateReminders: boolean;
+  lateFeePercentage: number;
+  acceptedPaymentMethods: {
+    bankTransfer: boolean;
+    upi: boolean;
+    cash: boolean;
+    cheque: boolean;
+    cardOnline: boolean;
+  };
+  upiId?: string;
+  bankDisplayPreference: 'Show Primary Bank Account' | 'Show Secondary Bank' | 'Hide Bank Info';
+  paymentInstructions?: string;
+  showGstOnInvoices: boolean;
+  showBankDetailsOnInvoices: boolean;
+  showPaymentInstructionsOnInvoices: boolean;
+  defaultInvoiceNotes?: string;
+  defaultTermsAndConditions?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export type RecipientRole = 'Owner' | 'Admin' | 'Project Manager' | 'Assigned Employee' | 'Accountant';
+
+export interface NotificationEventConfig {
+  eventId: string;
+  eventName: string;
+  category: 'CRM' | 'Work' | 'Finance' | 'HR & Payroll' | 'Assets & Docs' | 'System';
+  description: string;
+  enabled: boolean;
+  channels: {
+    inApp: boolean;
+    email: boolean;
+    browser: boolean;
+    sms: boolean;
+    whatsapp: boolean;
+  };
+  recipients: RecipientRole[];
+}
+
+export interface ReminderOffsetConfig {
+  id: string;
+  label: string;
+  offsetDays: number;
+  enabled: boolean;
+}
+
+/** EmailJS keys for browser-side email (the public key is meant to be public). */
+export interface EmailJsConfig {
+  serviceId: string;
+  templateId: string;
+  publicKey: string;
+  fromName?: string;
+}
+
+export interface NotificationSettings {
+  id: string; // 'default'
+  emailjs?: EmailJsConfig;
+  channels: {
+    inApp: boolean;
+    email: boolean;
+    browser: boolean;
+    sms: boolean;
+    whatsapp: boolean;
+  };
+  providers: {
+    email: { configured: boolean; providerName: string };
+    sms: { configured: boolean; providerName: string };
+    whatsapp: { configured: boolean; providerName: string };
+  };
+  events: NotificationEventConfig[];
+  reminderTiming: {
+    enabled: boolean;
+    defaultOffsetDays: number;
+    offsets: ReminderOffsetConfig[];
+  };
+  quietHours: {
+    enabled: boolean;
+    startTime: string; // e.g. "22:00"
+    endTime: string;   // e.g. "07:00"
+    timezone: string;
+  };
+  dailyDigest: {
+    enabled: boolean;
+    digestTime: string; // e.g. "09:00"
+    recipients: RecipientRole[];
+  };
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export class LegendaryDatabase extends Dexie {
+  users!: Table<User, any>;
+  clients!: Table<Client, any>;
+  services!: Table<CompanyService, any>;
+  projects!: Table<Project, any>;
+  tasks!: Table<ProjectTask, any>;
+  projectMilestones!: Table<ProjectMilestone, any>;
+  projectFiles!: Table<ProjectFile, any>;
+  projectActivity!: Table<ProjectActivity, any>;
+  invoices!: Table<Invoice, any>;
+  payments!: Table<Payment, any>;
+  expenses!: Table<Expense, any>;
+  employees!: Table<Employee, any>;
+  quotations!: Table<Quotation, any>;
+  leads!: Table<Lead, any>;
+  attendance!: Table<AttendanceRecord, any>;
+  deliverables!: Table<Deliverable, any>;
+  timesheets!: Table<TimesheetEntry, any>;
+  leaveRequests!: Table<LeaveRequest, any>;
+  payroll!: Table<PayrollRecord, any>;
+  assets!: Table<AssetRecord, any>;
+  documents!: Table<DocumentRecord, any>;
+  rolePermissions!: Table<RolePermissionConfig, any>;
+  billingSettings!: Table<BillingSettings, any>;
+  notificationSettings!: Table<NotificationSettings, any>;
+  payrollAdjustments!: Table<PayrollAdjustment, any>;
+
+  constructor() {
+    super('LegendaryOneDB');
+
+    // Define schema history for seamless Dexie upgrades
+    this.version(1).stores({
+      users: '++id, email, name, role',
+      clients: '++id, name, company, contact, phone, email, services, billing, status, city',
+      services: '++id, name, pricingType, status',
+      projects: '++id, name, clientId, clientName, serviceName, manager, status',
+      tasks: '++id, projectId, assignee, status, deadline',
+      projectMilestones: '++id, projectId, status',
+      projectFiles: '++id, projectId',
+      projectActivity: '++id, projectId, clientId',
+    });
+
+    this.version(2).stores({
+      users: '++id, email, name, role',
+      clients: '++id, name, company, contact, phone, email, services, billing, status, city',
+      services: '++id, name, pricingType, status',
+      projects: '++id, name, clientId, clientName, serviceName, manager, status',
+      tasks: '++id, projectId, assignee, status, deadline',
+      projectMilestones: '++id, projectId, status',
+      projectFiles: '++id, projectId',
+      projectActivity: '++id, projectId, clientId',
+    });
+
+    this.version(3).stores({
+      users: '++id, email, name, role',
+      clients: '++id, name, company, contact, phone, email, services, billing, status, city',
+      services: '++id, name, pricingType, status',
+      projects: '++id, name, clientId, clientName, serviceName, manager, status',
+      tasks: '++id, projectId, assignee, status, deadline',
+      projectMilestones: '++id, projectId, status',
+      projectFiles: '++id, projectId',
+      projectActivity: '++id, projectId, clientId',
+      invoices: '++id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: '++id, paymentNumber, clientName, date, method, status',
+      expenses: '++id, expenseNumber, name, category, date, amount',
+      employees: '++id, employeeId, name, role, dept, status, email',
+      quotations: '++id, quotationNumber, clientName, status, date',
+      leads: '++id, name, company, stage',
+      attendance: '++id, employeeId, date, status',
+      deliverables: '++id, client, type, date, status',
+    });
+
+    // Version 4: Local cache schema supporting both string & number IDs
+    this.version(4).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+    });
+
+    // Version 5: Added timesheets store
+    this.version(5).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+    });
+
+    // Version 6: Added leaveRequests store
+    this.version(6).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+    });
+
+    // Version 7: Added payroll store
+    this.version(7).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+      payroll: 'id, employeeId, month, status, department',
+    });
+
+    // Version 8: Added assets store
+    this.version(8).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+      payroll: 'id, employeeId, month, status, department',
+      assets: 'id, assetCode, assetName, category, status, assignedEmployeeId, locationDepartment',
+    });
+
+    // Version 9: Added documents store
+    this.version(9).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+      payroll: 'id, employeeId, month, status, department',
+      assets: 'id, assetCode, assetName, category, status, assignedEmployeeId, locationDepartment',
+      documents: 'id, title, type, category, relatedTo, status, expiryDate, createdAt',
+    });
+
+    // Version 10: Added rolePermissions store
+    this.version(10).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+      payroll: 'id, employeeId, month, status, department',
+      assets: 'id, assetCode, assetName, category, status, assignedEmployeeId, locationDepartment',
+      documents: 'id, title, type, category, relatedTo, status, expiryDate, createdAt',
+      rolePermissions: 'id, roleKey, roleName',
+    });
+
+    // Version 11: Added billingSettings store
+    this.version(11).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+      payroll: 'id, employeeId, month, status, department',
+      assets: 'id, assetCode, assetName, category, status, assignedEmployeeId, locationDepartment',
+      documents: 'id, title, type, category, relatedTo, status, expiryDate, createdAt',
+      rolePermissions: 'id, roleKey, roleName',
+      billingSettings: 'id',
+    });
+
+    // Version 12: Added notificationSettings store
+    this.version(12).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+      payroll: 'id, employeeId, month, status, department',
+      assets: 'id, assetCode, assetName, category, status, assignedEmployeeId, locationDepartment',
+      documents: 'id, title, type, category, relatedTo, status, expiryDate, createdAt',
+      rolePermissions: 'id, roleKey, roleName',
+      billingSettings: 'id',
+      notificationSettings: 'id',
+    });
+
+    // Version 13: Added payrollAdjustments store
+    this.version(13).stores({
+      users: 'id, email, name, role',
+      clients: 'id, name, company, contact, phone, email, services, billing, status, city',
+      services: 'id, name, pricingType, status',
+      projects: 'id, name, clientId, clientName, serviceName, manager, status',
+      tasks: 'id, projectId, assignee, status, deadline',
+      projectMilestones: 'id, projectId, status',
+      projectFiles: 'id, projectId',
+      projectActivity: 'id, projectId, clientId',
+      invoices: 'id, invoiceNumber, clientId, clientName, status, dueDate, date',
+      payments: 'id, paymentNumber, clientName, date, method, status',
+      expenses: 'id, expenseNumber, name, category, date, amount',
+      employees: 'id, employeeId, name, role, dept, status, email',
+      quotations: 'id, quotationNumber, clientName, status, date',
+      leads: 'id, name, company, stage',
+      attendance: 'id, employeeId, date, status',
+      deliverables: 'id, client, clientId, type, date, status',
+      timesheets: 'id, employeeId, projectId, date, isBillable',
+      leaveRequests: 'id, employeeId, leaveType, status, fromDate, toDate',
+      payroll: 'id, employeeId, month, status, department',
+      assets: 'id, assetCode, assetName, category, status, assignedEmployeeId, locationDepartment',
+      documents: 'id, title, type, category, relatedTo, status, expiryDate, createdAt',
+      rolePermissions: 'id, roleKey, roleName',
+      billingSettings: 'id',
+      notificationSettings: 'id',
+      payrollAdjustments: 'id, employeeId, month, type',
+    });
+  }
+}
+
+export const db = new LegendaryDatabase();
+
+/**
+ * Safely opens local Dexie IndexedDB cache.
+ * If a browser primary-key UpgradeError occurs due to schema changes,
+ * deletes the stale local cache database and re-opens a fresh cache instance.
+ */
+export async function safeOpenDatabase(): Promise<boolean> {
+  try {
+    if (!db.isOpen()) {
+      await db.open();
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('[Dexie] UpgradeError or cache schema mismatch detected:', err?.message || err);
+    try {
+      await Dexie.delete('LegendaryOneDB');
+      await db.open();
+      console.log('[Dexie] Local cache database reset and opened successfully.');
+      return true;
+    } catch (recreateErr) {
+      console.error('[Dexie] Could not reset local cache database:', recreateErr);
+      return false;
+    }
+  }
+}
+
+/**
+ * Seed initial service catalog if local cache is empty.
+ */
+export async function seedDatabaseIfEmpty() {
+  try {
+    await safeOpenDatabase();
+    const serviceCount = await db.services.count();
+    if (serviceCount === 0) {
+      await db.services.bulkAdd([
+        {
+          id: 'srv_1',
+          name: 'Website Development',
+          description: 'Custom responsive web design & development.',
+          pricingType: 'Fixed Price',
+          defaultPrice: 45000,
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: 'srv_2',
+          name: 'Software Development',
+          description: 'Custom web application & enterprise ERP development.',
+          pricingType: 'Milestone',
+          defaultPrice: 150000,
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: 'srv_3',
+          name: 'Android App Development',
+          description: 'Native & cross-platform Android mobile app development.',
+          pricingType: 'Milestone',
+          defaultPrice: 120000,
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: 'srv_4',
+          name: 'Digital Marketing',
+          description: 'Digital marketing, social media ads, & lead generation.',
+          pricingType: 'Monthly Retainer',
+          defaultPrice: 25000,
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: 'srv_5',
+          name: 'SEO',
+          description: 'Search engine optimization & keyword ranking audit.',
+          pricingType: 'Monthly Retainer',
+          defaultPrice: 15000,
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: 'srv_6',
+          name: 'Branding',
+          description: 'Brand strategy, logo creation, & brand identity guide.',
+          pricingType: 'One-Time',
+          defaultPrice: 50000,
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    }
+  } catch (error) {
+    console.warn('[Dexie] Seed service catalog warning:', error);
+  }
+}

@@ -1,0 +1,308 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+
+  --color-primary: #3B5BDB;
+  --color-primary-dark: #2F4AC0;
+  --color-primary-light: #EEF2FF;
+  --color-accent: #0EA5E9;
+  --color-accent-light: #E0F2FE;
+  --color-surface: #F8F9FC;
+  --color-card: #FFFFFF;
+  --color-border: #E5E9F2;
+  --color-text: #1A1F36;
+  --color-text-muted: #697586;
+  --color-success: #12B76A;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-sidebar: #1A1F36;
+  --color-sidebar-hover: #252D4A;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #94A3C4;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.sidebar-item:hover {
+  background: #252D4A;
+  color: #E2E8F6;
+}
+.sidebar-item.active {
+  background: #3B5BDB;
+  color: #fff;
+}
+.sidebar-section {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4A5578;
+  padding: 4px 12px;
+  margin-top: 16px;
+  margin-bottom: 2px;
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 600;
+  gap: 4px;
+}
+.badge-green { background: #DCFCE7; color: #166534; }
+.badge-blue { background: #EEF2FF; color: #3B5BDB; }
+.badge-amber { background: #FEF3C7; color: #92400E; }
+.badge-red { background: #FEE2E2; color: #991B1B; }
+.badge-gray { background: #F1F5F9; color: #475569; }
+.badge-cyan { background: #E0F2FE; color: #0369A1; }
+.badge-purple { background: #F3E8FF; color: #6B21A8; }
+.badge-orange { background: #FFF7ED; color: #C2410C; }
+.badge-teal { background: #CCFBF1; color: #0F766E; }
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #3B5BDB;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: inherit;
+}
+.btn-primary:hover { background: #2F4AC0; }
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  color: #1A1F36;
+  border: 1px solid #E5E9F2;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn-secondary:hover { background: #F8F9FC; border-color: #C9D0E3; }
+
+.table-base {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.table-base th {
+  background: #F8F9FC;
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: #697586;
+  border-bottom: 1px solid #E5E9F2;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.table-base td {
+  padding: 11px 14px;
+  border-bottom: 1px solid #F1F5F9;
+  color: #1A1F36;
+  vertical-align: middle;
+}
+.table-base tr:last-child td { border-bottom: none; }
+.table-base tr:hover td { background: #F8F9FC; }
+
+.card {
+  background: #fff;
+  border: 1px solid #E5E9F2;
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.input-base {
+  width: 100%;
+  border: 1px solid #E5E9F2;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #1A1F36;
+  background: #fff;
+  outline: none;
+  transition: border 0.15s;
+}
+.input-base:focus { border-color: #3B5BDB; box-shadow: 0 0 0 3px rgba(59,91,219,0.08); }
+
+/* Same look as .input-base; used by the Assets, Leave and Payroll forms */
+.input-field {
+  width: 100%;
+  border: 1px solid #E5E9F2;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #1A1F36;
+  background: #fff;
+  outline: none;
+  transition: border 0.15s;
+}
+.input-field:focus { border-color: #3B5BDB; box-shadow: 0 0 0 3px rgba(59,91,219,0.08); }
+.input-field:disabled, .input-base:disabled { background: #F8FAFC; cursor: not-allowed; }
+select.input-field { cursor: pointer; }
+textarea.input-field, textarea.input-base { resize: vertical; }
+
+.select-base {
+  border: 1px solid #E5E9F2;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #1A1F36;
+  background: #fff;
+  outline: none;
+  cursor: pointer;
+}
+
+.tab-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: #697586;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.tab-btn.active {
+  background: #EEF2FF;
+  color: #3B5BDB;
+  font-weight: 600;
+}
+.tab-btn:hover:not(.active) { background: #F1F5F9; }
+
+.page-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: #1A1F36;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15,23,42,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-box {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Login Page Responsive Styling */
+.login-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #1A1F36 0%, #252D4A 50%, #1e3a5f 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+  position: relative;
+}
+
+.login-card-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  transition: max-width 0.25s ease;
+}
+
+.login-card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 40px 40px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
+  transition: padding 0.25s ease, border-radius 0.25s ease;
+}
+
+/* Tablet Screens (768px to 1024px) */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .login-card-wrapper {
+    max-width: 520px;
+  }
+  .login-card {
+    padding: 48px 44px;
+    border-radius: 24px;
+  }
+}
+
+/* Small Mobile Screens (< 480px) */
+@media (max-width: 480px) {
+  .login-card {
+    padding: 30px 22px;
+    border-radius: 16px;
+  }
+}
