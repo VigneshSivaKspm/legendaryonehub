@@ -4,13 +4,15 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../db/database';
 import { pendingRequests } from '../utils/attendanceTimes';
 import logo from '../assets/legendary-one-logo.png';
+import MobileShell, { type NavEntry } from './MobileShell';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 type NavScreen =
   | 'dashboard' | 'leads' | 'clients' | 'client-profile'
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses' | 'profile' | 'employee-profile';
 
 interface Props {
   current: string;
@@ -57,6 +59,7 @@ export default function Layout({ current, onNav, children }: Props) {
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [searchVal, setSearchVal] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const isMobile = useIsMobile();
 
   // Live query search targets
   const liveClients = useLiveQuery(() => db.clients.toArray(), []) || [];
@@ -139,6 +142,43 @@ export default function Layout({ current, onNav, children }: Props) {
         .filter((res) => canAccessScreen(res.screen))
         .slice(0, 8)
     : [];
+
+  /** Same visibility rules as the desktop sidebar, flattened for the mobile drawer */
+  const isNavItemVisible = (key: string) => {
+    if (!canAccessScreen(key)) return false;
+    if (key === 'my-workspace' && (isSelfService || !myEmployee)) return false;
+    if (key === 'my-attendance' && !myEmployee) return false;
+    return true;
+  };
+  const navEntries: NavEntry[] = [];
+  nav.forEach((item) => {
+    if ('section' in item) {
+      navEntries.push({ section: item.section as string });
+    } else if (isNavItemVisible(item.key!)) {
+      navEntries.push({ key: item.key!, label: item.key === 'dashboard' && isSelfService ? 'My Dashboard' : item.label! });
+    }
+  });
+  const visibleNavEntries = navEntries.filter(
+    (e, i) => !('section' in e) || (navEntries[i + 1] !== undefined && !('section' in navEntries[i + 1]))
+  );
+
+  if (isMobile) {
+    return (
+      <MobileShell
+        current={current}
+        onNav={(s) => onNav(s as NavScreen)}
+        navEntries={visibleNavEntries}
+        quickItems={quickItems}
+        searchVal={searchVal}
+        setSearchVal={setSearchVal}
+        searchResults={searchResults}
+        pendingAttendanceCount={pendingAttendanceCount}
+        fyBadge={getFYBadge()}
+      >
+        {children}
+      </MobileShell>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -234,6 +274,14 @@ export default function Layout({ current, onNav, children }: Props) {
               <div style={{ padding: '6px 10px', fontSize: 11, color: '#94A3C4', borderBottom: '1px solid #323C62', marginBottom: 4 }}>
                 Logged in as <strong>{user?.email}</strong>
               </div>
+              <button
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 10px', background: 'none', border: 'none', fontSize: 12.5, color: '#E2E8F6', cursor: 'pointer', borderRadius: 6, fontWeight: 600 }}
+                onClick={() => { setShowUserMenu(false); onNav('profile'); }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+              >
+                👤 My Profile
+              </button>
               <button
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 10px', background: 'none', border: 'none', fontSize: 12.5, color: '#EF4444', cursor: 'pointer', borderRadius: 6, fontWeight: 600 }}
                 onClick={() => { setShowUserMenu(false); logout(); }}
@@ -439,13 +487,11 @@ export default function Layout({ current, onNav, children }: Props) {
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
                       onClick={() => {
                         setShowHeaderUserMenu(false);
-                        if (canAccessScreen('settings')) {
-                          onNav('settings');
-                        }
+                        onNav('profile');
                       }}
                     >
                       <span style={{ fontSize: 14 }}>👤</span>
-                      Profile / Account
+                      My Profile
                     </button>
 
                     {canAccessScreen('settings') && (
@@ -517,7 +563,7 @@ export default function Layout({ current, onNav, children }: Props) {
         </header>
 
         {/* Content Area */}
-        <main style={{ flex: 1, overflow: 'auto', background: '#F8F9FC' }}>
+        <main className="app-main" style={{ flex: 1, overflow: 'auto', background: '#F8F9FC' }}>
           {children}
         </main>
       </div>

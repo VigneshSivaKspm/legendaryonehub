@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { isOwnerOrAdminRole } from './services/authService';
 import { ToastProvider } from './context/ToastContext';
@@ -31,6 +31,7 @@ import Documents from './pages/Documents';
 import MyWorkspace, { type WorkspaceTab } from './pages/MyWorkspace';
 import MyAttendance from './pages/MyAttendance';
 import EmployeeExpenses from './pages/EmployeeExpenses';
+import Profile from './pages/Profile';
 import logo from './assets/legendary-one-logo.png';
 
 type AppScreen =
@@ -38,7 +39,7 @@ type AppScreen =
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses' | 'profile' | 'employee-profile';
 
 function MainApp() {
   const {
@@ -55,6 +56,26 @@ function MainApp() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | string>('');
   // Tab to open My Workspace on; `n` remounts it so the same tab can be requested again
   const [workspaceTab, setWorkspaceTab] = useState<{ tab: WorkspaceTab; n: number }>({ tab: 'overview', n: 0 });
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<number | string>('');
+
+  // Screens live in browser history so the browser / Android back button moves between them
+  useEffect(() => {
+    // Installed-app shortcuts open a screen with ?screen=
+    const start = new URLSearchParams(window.location.search).get('screen') as AppScreen | null;
+    if (start) setScreen(start);
+    window.history.replaceState({ screen: start || 'dashboard' }, '', window.location.pathname);
+
+    const onPop = (e: PopStateEvent) => {
+      const st = (e.state || {}) as { screen?: AppScreen; clientId?: string | number; projectId?: string | number; employeeId?: string | number };
+      if (!st.screen) return;
+      if (st.clientId !== undefined) setSelectedClientId(st.clientId);
+      if (st.projectId !== undefined) setSelectedProjectId(st.projectId);
+      if (st.employeeId !== undefined) setSelectedEmployeeId(st.employeeId);
+      setScreen(st.screen);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   if (isLoading || (isAuthenticated && isCheckingCompanySetup)) {
     return (
@@ -82,14 +103,20 @@ function MainApp() {
     }
   }
 
+  /** Open a screen and record it in history (extra = ids the screen needs when going back to it) */
+  const go = (s: AppScreen, extra: Record<string, string | number> = {}) => {
+    if (s === screen && Object.keys(extra).length === 0) return;
+    setScreen(s);
+    window.history.pushState({ screen: s, ...extra }, '');
+  };
   const nav = (s: string) => {
     if (s === 'login') return;
     setWorkspaceTab((w) => ({ tab: 'overview', n: w.n + 1 }));
-    setScreen(s as AppScreen);
+    go(s as AppScreen);
   };
   const workspaceScreen: AppScreen = isSelfService ? 'dashboard' : 'my-workspace';
   const workspace = (
-    <MyWorkspace key={workspaceTab.n} initialTab={workspaceTab.tab} onOpenAttendance={() => setScreen('my-attendance')} />
+    <MyWorkspace key={workspaceTab.n} initialTab={workspaceTab.tab} onOpenAttendance={() => go('my-attendance')} />
   );
 
   const renderScreen = () => {
@@ -103,7 +130,7 @@ function MainApp() {
           <div style={{ fontSize: 13.5, color: '#697586', marginBottom: 20, maxWidth: 400, margin: '0 auto 20px', lineHeight: 1.5 }}>
             Your account role (<strong>{user?.role}</strong>) does not have authorization to access this module.
           </div>
-          <button className="btn-primary" onClick={() => setScreen('dashboard')}>
+          <button className="btn-primary" onClick={() => go('dashboard')}>
             Return to Dashboard
           </button>
         </div>
@@ -117,7 +144,7 @@ function MainApp() {
           <MyAttendance
             onOpenTodayTasks={() => {
               setWorkspaceTab((w) => ({ tab: 'today', n: w.n + 1 }));
-              setScreen(workspaceScreen);
+              go(workspaceScreen);
             }}
           />
         );
@@ -129,30 +156,30 @@ function MainApp() {
             onNav={nav}
             onViewClient={(id) => {
               setSelectedClientId(id);
-              setScreen('client-profile');
+              go('client-profile', { clientId: id });
             }}
             onViewProject={(id) => {
               setSelectedProjectId(id);
-              setScreen('project-detail');
+              go('project-detail', { projectId: id });
             }}
           />
         );
       case 'leads':
         return <Leads />;
       case 'clients':
-        return <Clients onViewClient={(id) => { setSelectedClientId(id); setScreen('client-profile'); }} />;
+        return <Clients onViewClient={(id) => { setSelectedClientId(id); go('client-profile', { clientId: id }); }} />;
       case 'client-profile':
         return (
           <ClientProfile
             clientId={selectedClientId}
-            onBack={() => setScreen('clients')}
-            onViewProject={(id) => { setSelectedProjectId(id); setScreen('project-detail'); }}
+            onBack={() => go('clients')}
+            onViewProject={(id) => { setSelectedProjectId(id); go('project-detail', { projectId: id }); }}
           />
         );
       case 'projects':
-        return <Projects onViewProject={(id) => { setSelectedProjectId(id); setScreen('project-detail'); }} />;
+        return <Projects onViewProject={(id) => { setSelectedProjectId(id); go('project-detail', { projectId: id }); }} />;
       case 'project-detail':
-        return <ProjectDetail projectId={selectedProjectId} onBack={() => setScreen('projects')} />;
+        return <ProjectDetail projectId={selectedProjectId} onBack={() => go('projects')} />;
       case 'services':
         return <Services />;
       case 'tasks':
@@ -168,7 +195,18 @@ function MainApp() {
       case 'expenses':
         return <Expenses />;
       case 'employees':
-        return <Employees />;
+        return (
+          <Employees
+            onViewProfile={(id) => {
+              setSelectedEmployeeId(id);
+              go('employee-profile', { employeeId: id });
+            }}
+          />
+        );
+      case 'profile':
+        return <Profile onNav={nav} />;
+      case 'employee-profile':
+        return <Profile employeeId={selectedEmployeeId} onNav={nav} onBack={() => go('employees')} />;
       case 'attendance':
         return <Attendance />;
       case 'timesheets':

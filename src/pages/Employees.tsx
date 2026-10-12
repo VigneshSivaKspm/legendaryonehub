@@ -44,7 +44,7 @@ const accessRoleBadge: Record<EmployeeAccessRole, string> = {
   Admin: 'badge-amber',
 };
 
-export default function Employees() {
+export default function Employees({ onViewProfile }: { onViewProfile?: (id: string | number) => void } = {}) {
   const { showToast } = useToast();
 
   const [search, setSearch] = useState('');
@@ -450,6 +450,16 @@ export default function Employees() {
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        {onViewProfile && e.id !== undefined && (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: 11.5, padding: '4px 8px' }}
+                            onClick={() => onViewProfile(e.id!)}
+                          >
+                            Profile
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="btn-secondary"

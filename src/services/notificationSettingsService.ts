@@ -1,5 +1,6 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getToken, onMessage } from 'firebase/messaging';
+import { serviceWorkerUrl } from '../pwa';
 import { dbFirestore, getFirebaseMessaging, firebaseConfig } from '../config/firebase';
 import {
   db,
@@ -424,8 +425,8 @@ export async function requestAndStoreFcmToken(
   // Register service worker with Firebase config parameters
   let swRegistration: ServiceWorkerRegistration | undefined;
   try {
-    const swUrl = `/firebase-messaging-sw.js?projectId=${encodeURIComponent(firebaseConfig.projectId)}&messagingSenderId=${encodeURIComponent(firebaseConfig.messagingSenderId)}`;
-    swRegistration = await navigator.serviceWorker.register(swUrl, { scope: '/' });
+    // Same worker as the installable app (public/sw.js), so push and offline support share scope "/"
+    swRegistration = await navigator.serviceWorker.register(serviceWorkerUrl(), { scope: '/' });
   } catch (swErr) {
     console.warn('[FCM] Service worker registration notice:', swErr);
   }

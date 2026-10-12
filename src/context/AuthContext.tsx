@@ -41,7 +41,7 @@ interface AuthContextType {
 
 /** Modules that show every employee's or the company's data; plain employees use My Workspace instead. */
 const SELF_SERVICE_BLOCKED = new Set([
-  'projects', 'project-detail',
+  'projects', 'project-detail', 'employee-profile',
   'employees', 'attendance', 'leave', 'payroll', 'employee-expenses', 'timesheets',
   'invoices', 'payments', 'expenses', 'quotations', 'reports',
   'services', 'settings', 'assets', 'leads', 'clients', 'client-profile',
@@ -221,7 +221,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return false;
     if (isOwnerOrAdminRole(role)) return true;
     // Personal workspace: everyone with a linked employee record
-    if (screenKey === 'my-workspace' || screenKey === 'my-attendance') return true;
+    if (screenKey === 'my-workspace' || screenKey === 'my-attendance' || screenKey === 'profile') return true;
     if (isSelfService && SELF_SERVICE_BLOCKED.has(screenKey)) return false;
 
     // Check custom role permissions if configured
@@ -236,6 +236,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let keyToLookup = screenKey;
       if (screenKey === 'client-profile') keyToLookup = 'clients';
       if (screenKey === 'project-detail') keyToLookup = 'projects';
+      if (screenKey === 'employee-profile') keyToLookup = 'employees';
 
       if (customRoleConfig.permissions[keyToLookup] !== undefined) {
         return Boolean(customRoleConfig.permissions[keyToLookup]);
@@ -261,6 +262,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       case 'quotations':
         return isOwnerOrAdminRole(role) || role === 'Accountant';
       case 'employees':
+      case 'employee-profile':
       case 'attendance':
       case 'timesheets':
       case 'leave':

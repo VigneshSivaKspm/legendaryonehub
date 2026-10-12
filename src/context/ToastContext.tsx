@@ -35,6 +35,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       {children}
       {/* Render Toast Notifications */}
       <div
+        className="toast-stack"
         style={{
           position: 'fixed',
           bottom: 24,
