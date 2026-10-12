@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Project } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addProject, updateProject, deleteProject, archiveProject } from '../services/projectService';
 import { validateProjectForm, type ProjectValidationErrors } from '../utils/validation';
 import { useToast } from '../context/ToastContext';
@@ -82,13 +83,13 @@ export default function Projects({ onViewProject }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Live queries from Dexie database
-  const projects = useLiveQuery(() => db.projects.toArray(), []) || [];
+  const projects = useLiveQuery(async () => newestFirst(await db.projects.toArray(), (p) => p.startDate), []) || [];
   const clients = useLiveQuery(() => db.clients.toArray(), []) || [];
   const services = useLiveQuery(() => db.services.toArray(), []) || [];
   const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
   const payments = useLiveQuery(() => db.payments.toArray(), []) || [];
   const invoices = useLiveQuery(() => db.invoices.toArray(), []) || [];
-  const expenses = useLiveQuery(() => db.expenses.toArray(), []) || [];
+  const expenses = useLiveQuery(async () => newestFirst(await db.expenses.toArray(), (e) => e.date), []) || [];
   const projectManagerCount = employees.filter((e) => canManageProjects(e) && e.status !== 'Inactive').length;
   const editingProjectPaymentCount = editingProject
     ? payments.filter((pm) => pm.projectId !== undefined && String(pm.projectId) === String(editingProject.id)).length
@@ -633,7 +634,7 @@ export default function Projects({ onViewProject }: Props) {
                   />
                   {projectManagerCount === 0 && (
                     <div style={{ fontSize: 11.5, color: '#697586', marginTop: 4 }}>
-                      No managers yet. In Employees, set an employee's Access Role to "Project Manager" or their department to Management.
+                      No managers yet. In Employees, set an employee's Access Role to "Project Manager".
                     </div>
                   )}
                   {formErrors.manager && <div style={{ fontSize: 11.5, color: '#EF4444', marginTop: 4 }}>{formErrors.manager}</div>}
@@ -843,7 +844,7 @@ export default function Projects({ onViewProject }: Props) {
                   />
                   {projectManagerCount === 0 && (
                     <div style={{ fontSize: 11.5, color: '#697586', marginTop: 4 }}>
-                      No managers yet. In Employees, set an employee's Access Role to "Project Manager" or their department to Management.
+                      No managers yet. In Employees, set an employee's Access Role to "Project Manager".
                     </div>
                   )}
                   {formErrors.manager && <div style={{ fontSize: 11.5, color: '#EF4444', marginTop: 4 }}>{formErrors.manager}</div>}

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Invoice } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addInvoice, deleteInvoice } from '../services/invoiceService';
 import { addPayment } from '../services/paymentService';
 import { useToast } from '../context/ToastContext';
@@ -39,7 +40,7 @@ export default function Invoices() {
   const [newInvDueDate, setNewInvDueDate] = useState('');
 
   // Fetch live invoices, payments & clients from Dexie cache (synchronized in real time with Firestore)
-  const invoices = useLiveQuery(() => db.invoices.toArray(), []) || [];
+  const invoices = useLiveQuery(async () => newestFirst(await db.invoices.toArray(), (i) => i.date), []) || [];
   const payments = useLiveQuery(() => db.payments.toArray(), []) || [];
   const clients = useLiveQuery(() => db.clients.toArray(), []) || [];
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];

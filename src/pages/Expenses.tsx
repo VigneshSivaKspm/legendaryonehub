@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 import { db, type Expense } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addExpense, deleteExpense } from '../services/expenseService';
 import { useToast } from '../context/ToastContext';
 import { Trash2, Download, FileText } from 'lucide-react';
@@ -110,7 +111,7 @@ export default function Expenses() {
   const [notes, setNotes] = useState('');
 
   // Live queries from Dexie
-  const dbExpenses = useLiveQuery(() => db.expenses.toArray(), []) || [];
+  const dbExpenses = useLiveQuery(async () => newestFirst(await db.expenses.toArray(), (e) => e.date), []) || [];
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];
 
   // Combined: static company expenses + DB project-linked expenses
@@ -141,7 +142,7 @@ export default function Expenses() {
       }
 
       return matchesSearch && matchesCat && matchesPeriod;
-    });
+    }).sort((a, b) => b.date.localeCompare(a.date));
   }, [search, categoryFilter, periodFilter]);
 
   // Project expenses from DB

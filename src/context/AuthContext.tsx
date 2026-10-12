@@ -41,6 +41,7 @@ interface AuthContextType {
 
 /** Modules that show every employee's or the company's data; plain employees use My Workspace instead. */
 const SELF_SERVICE_BLOCKED = new Set([
+  'projects', 'project-detail',
   'employees', 'attendance', 'leave', 'payroll', 'timesheets',
   'invoices', 'payments', 'expenses', 'quotations', 'reports',
   'services', 'settings', 'assets', 'leads', 'clients', 'client-profile',
@@ -220,7 +221,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return false;
     if (isOwnerOrAdminRole(role)) return true;
     // Personal workspace: everyone with a linked employee record
-    if (screenKey === 'my-workspace') return true;
+    if (screenKey === 'my-workspace' || screenKey === 'my-attendance') return true;
     if (isSelfService && SELF_SERVICE_BLOCKED.has(screenKey)) return false;
 
     // Check custom role permissions if configured

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Employee, type Project, type TimesheetEntry } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   getAllTimesheets,
   addTimesheet,
@@ -134,7 +135,7 @@ export default function Timesheets() {
   // Live queries from Dexie cache
   const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];
-  const timesheetRecords = useLiveQuery(() => db.timesheets.toArray(), []) || [];
+  const timesheetRecords = useLiveQuery(async () => newestFirst(await db.timesheets.toArray(), (t) => t.date), []) || [];
 
   const activeEmployees = useMemo(() => {
     return employees.filter((e) => e.status !== 'Inactive');
@@ -906,7 +907,7 @@ export default function Timesheets() {
                   >
                     {activeEmployees.map((emp) => (
                       <option key={emp.id} value={emp.id || emp.employeeId}>
-                        {emp.name} ({emp.dept})
+                        {emp.name}{emp.role ? ` (${emp.role})` : ''}
                       </option>
                     ))}
                   </select>

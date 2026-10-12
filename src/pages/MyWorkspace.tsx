@@ -1,38 +1,22 @@
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type AttendanceApproval, type LeaveRequest, type PayrollRecord, type ProjectTask } from '../db/database';
+import { db, type LeaveRequest, type PayrollRecord, type ProjectTask } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { updateTask } from '../services/taskService';
 import { addLeaveRequest } from '../services/leaveService';
-import { addAttendance, updateAttendance } from '../services/attendanceService';
 import { adjustmentsFor } from '../services/payrollAdjustmentService';
 import { calculateLeaveDays } from './Leave';
-import {
-  WORK_START,
-  LUNCH_MAX_MINUTES,
-  formatTime12h,
-  formatLunch,
-  lunchMinutes,
-  minutesOf,
-  addMinutes,
-  toHHMM,
-  toLocalDate,
-  overtimeFor,
-  isCheckedIn,
-  checkOutBlockers,
-  REQUEST_LABELS,
-  type RequestKind,
-} from '../utils/attendanceTimes';
-import { useAttendancePolicy, assertOnOfficeNetwork, getTrustedNow } from '../services/attendancePolicyService';
-import AttendanceRequestBadges from '../components/AttendanceRequestBadges';
+import { formatTime12h, formatLunch, formatDuration, isDueOn, isTaskDone } from '../utils/attendanceTimes';
+import { computeMonthPay, formatRate } from '../utils/salary';
 
-export type WorkspaceTab = 'overview' | 'tasks' | 'attendance' | 'leave' | 'salary';
+export type WorkspaceTab = 'overview' | 'today' | 'tasks' | 'leave' | 'salary';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
-  { key: 'tasks', label: 'My Tasks' },
-  { key: 'attendance', label: 'My Attendance' },
+  { key: 'today', label: "Today's Tasks" },
+  { key: 'tasks', label: 'All My Tasks' },
   { key: 'leave', label: 'My Leave' },
   { key: 'salary', label: 'My Salary' },
 ];
@@ -74,18 +58,22 @@ function Stat({ label, value, color, sub }: { label: string; value: string; colo
 }
 
 /** Personal dashboard for a signed-in employee: only their own tasks, attendance, leave and salary. */
-export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: WorkspaceTab }) {
-  const { user, myEmployee } = useAuth();
+export default function MyWorkspace({
+  initialTab = 'overview',
+  onOpenAttendance,
+}: {
+  initialTab?: WorkspaceTab;
+  onOpenAttendance?: () => void;
+}) {
+  const { user, myEmployee, companyProfile } = useAuth();
   const { showToast } = useToast();
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
-  const [month, setMonth] = useState(localDate().slice(0, 7));
   const [busy, setBusy] = useState(false);
   const [showLeaveForm, setShowLeaveForm] = useState(false);
   const [payslip, setPayslip] = useState<PayrollRecord | null>(null);
-  const { policy } = useAttendancePolicy();
-  // A self-service action that broke an attendance rule and needs a reason before going to the admin
-  const [request, setRequest] = useState<{ kind: RequestKind; date: string; time: string; reasons: string[] } | null>(null);
-  const [requestNote, setRequestNote] = useState('');
+  // Progress update for an unfinished task: % done + why it's running late
+  const [progressTask, setProgressTask] = useState<ProjectTask | null>(null);
+  const [progressForm, setProgressForm] = useState({ progress: 0, reason: '' });
   const [leaveForm, setLeaveForm] = useState({
     leaveType: 'Casual Leave',
     fromDate: localDate(),
@@ -106,13 +94,14 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
 
   const myTasks = useMemo(
     () =>
-      tasks
-        .filter(
+      newestFirst(
+        tasks.filter(
           (t) =>
             (t.assignedToId !== undefined && String(t.assignedToId) === empId) ||
             (!!empName && (t.assignedTo === empName || t.assignee === empName))
-        )
-        .sort((a, b) => String(a.dueDate || a.deadline || '').localeCompare(String(b.dueDate || b.deadline || ''))),
+        ),
+        (t) => t.start || t.dueDate || t.deadline
+      ),
     [tasks, empId, empName]
   );
   const myAttendance = useMemo(
@@ -148,6 +137,9 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
   const today = localDate();
   const todayRecord = myAttendance.find((a) => a.date === today);
   const openTasks = myTasks.filter((t) => t.status !== 'Completed' && t.status !== 'Done');
+  const todayTasks = myTasks.filter((t) => isDueOn(t, today));
+  const todayNeedsUpdate = todayTasks.filter((t) => !isTaskDone(t) && t.progressUpdatedOn !== today).length;
+  const month = today.slice(0, 7);
   const monthAttendance = myAttendance.filter((a) => a.date.startsWith(month));
   const counts = monthAttendance.reduce(
     (acc, a) => {
@@ -163,13 +155,17 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
     .reduce((s, l) => s + (Number(l.days) || 0), 0);
   const pendingLeaves = myLeaves.filter((l) => l.status === 'Pending').length;
   const lastPay = myPayroll[0];
+  // Salary earned this month under the attendance rules (same maths as the admin payroll)
+  const monthPay = computeMonthPay({
+    month,
+    salary: Number(myEmployee.salary) || 0,
+    workingWeekdays: companyProfile?.workingDays,
+    attendance: myAttendance,
+    leaves: myLeaves,
+    today,
+  });
 
   // ---------- actions ----------
-  const checkedIn = isCheckedIn(todayRecord);
-  const canAct = checkedIn && !todayRecord?.checkOut;
-  const onLunch = canAct && !!todayRecord?.lunchOut && !todayRecord?.lunchIn;
-  const checkOutPending = todayRecord?.checkOutRequest?.status === 'Pending';
-
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -181,133 +177,39 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
     }
   };
 
-  /** Every self-service action must happen on the office WiFi; the time comes from the server clock. */
-  const verifiedNow = async () => {
-    await assertOnOfficeNetwork(policy);
-    const now = await getTrustedNow();
-    return { date: toLocalDate(now), time: toHHMM(now) };
-  };
-
-  const askApproval = (kind: RequestKind, at: { date: string; time: string }, reasons: string[]) => {
-    setRequestNote('');
-    setRequest({ kind, ...at, reasons });
-  };
-
-  const employeeFields = () => ({
-    employeeId: myEmployee.id,
-    employeeCode: myEmployee.employeeId || String(myEmployee.id),
-    employeeName: myEmployee.name,
-    dept: myEmployee.dept,
-  });
-
-  const handleCheckIn = () =>
-    run(async () => {
-      const at = await verifiedNow();
-      if (myAttendance.some((a) => a.date === at.date)) {
-        showToast('Your attendance for today is already recorded.', 'info');
-        return;
-      }
-      if (minutesOf(at.time) > minutesOf(WORK_START)) {
-        askApproval('checkInRequest', at, [`Checking in at ${formatTime12h(at.time)}, after ${formatTime12h(WORK_START)}`]);
-        return;
-      }
-      await addAttendance({
-        ...employeeFields(),
-        date: at.date,
-        status: 'Present',
-        checkIn: at.time,
-        checkOut: '',
-        overtimeHours: 0,
-        notes: 'Self check-in',
-      });
-      showToast('Checked in. Have a great day!', 'success');
-    });
-
-  const handleLunchOut = () =>
-    run(async () => {
-      if (!todayRecord?.id) return;
-      const at = await verifiedNow();
-      await updateAttendance(todayRecord.id, { lunchOut: at.time });
-      showToast(`Lunch break started. Please be back by ${formatTime12h(addMinutes(at.time, LUNCH_MAX_MINUTES))}.`, 'success');
-    });
-
-  const handleLunchIn = () =>
-    run(async () => {
-      if (!todayRecord?.id || !todayRecord.lunchOut) return;
-      const at = await verifiedNow();
-      const mins = minutesOf(at.time) - minutesOf(todayRecord.lunchOut);
-      if (mins > LUNCH_MAX_MINUTES) {
-        askApproval('lunchRequest', at, [`Lunch break of ${mins} minutes (limit is ${LUNCH_MAX_MINUTES} minutes)`]);
-        return;
-      }
-      await updateAttendance(todayRecord.id, { lunchIn: at.time });
-      showToast('Welcome back!', 'success');
-    });
-
-  const handleCheckOut = () =>
-    run(async () => {
-      if (!todayRecord?.id) return;
-      if (onLunch) {
-        showToast('End your lunch break (Lunch In) before checking out.', 'error');
-        return;
-      }
-      const at = await verifiedNow();
-      const dueToday = myTasks.filter((t) => String(t.dueDate || t.deadline || '').slice(0, 10) === at.date);
-      const reasons = checkOutBlockers(todayRecord, at.time, dueToday);
-      if (reasons.length > 0) {
-        askApproval('checkOutRequest', at, reasons);
-        return;
-      }
-      const overtimeHours = overtimeFor(at.time);
-      await updateAttendance(todayRecord.id, { checkOut: at.time, overtimeHours });
-      showToast(`Checked out at ${formatTime12h(at.time)}${overtimeHours ? ` (${overtimeHours}h overtime)` : ''}.`, 'success');
-    });
-
-  const handleSubmitRequest = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!request) return;
-    if (!requestNote.trim()) {
-      showToast('Please add a reason for the admin.', 'error');
-      return;
-    }
-    run(async () => {
-      const approval: AttendanceApproval = {
-        status: 'Pending',
-        time: request.time,
-        reasons: request.reasons,
-        note: requestNote.trim(),
-        requestedAt: new Date().toISOString(),
-      };
-      if (request.kind === 'checkInRequest') {
-        await addAttendance({
-          ...employeeFields(),
-          date: request.date,
-          status: 'Late',
-          checkIn: request.time,
-          checkOut: '',
-          overtimeHours: 0,
-          notes: 'Self check-in (late)',
-          checkInRequest: approval,
-        });
-      } else if (todayRecord?.id) {
-        await updateAttendance(
-          todayRecord.id,
-          request.kind === 'lunchRequest' ? { lunchIn: request.time, lunchRequest: approval } : { checkOutRequest: approval }
-        );
-      }
-      showToast('Sent to the admin for approval.', 'success');
-      setRequest(null);
-    });
-  };
-
   const handleTaskStatus = async (t: ProjectTask, status: ProjectTask['status']) => {
     if (!t.id) return;
     try {
-      await updateTask(t.id, { status });
+      await updateTask(t.id, status === 'Completed' ? { status, progress: 100 } : { status });
       showToast(`Task marked ${status}.`, 'success');
     } catch (err: any) {
       showToast(err?.message || 'Could not update task.', 'error');
     }
+  };
+
+  const openProgress = (t: ProjectTask) => {
+    setProgressTask(t);
+    setProgressForm({ progress: Math.min(Number(t.progress) || 0, 90), reason: t.delayReason || '' });
+  };
+
+  const handleSaveProgress = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!progressTask?.id) return;
+    if (!progressForm.reason.trim()) {
+      showToast('Please explain why this task is still pending.', 'error');
+      return;
+    }
+    run(async () => {
+      await updateTask(progressTask.id!, {
+        status: progressForm.progress > 0 ? 'In Progress' : 'Pending',
+        progress: progressForm.progress,
+        delayReason: progressForm.reason.trim(),
+        progressUpdatedOn: today,
+        progressUpdatedAt: new Date().toISOString(),
+      });
+      showToast('Progress updated.', 'success');
+      setProgressTask(null);
+    });
   };
 
   const leaveDays = calculateLeaveDays(leaveForm.fromDate, leaveForm.toDate, leaveForm.isHalfDay);
@@ -417,6 +319,96 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
     </table>
   );
 
+  const progressBar = (pct: number, color: string) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1, height: 6, background: '#E5E9F2', borderRadius: 3, overflow: 'hidden', minWidth: 80 }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color }} />
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 700, color: '#1A1F36', width: 34 }}>{pct}%</span>
+    </div>
+  );
+
+  const todayTasksPanel = () => (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36' }}>
+          Today's tasks · {todayTasks.filter(isTaskDone).length}/{todayTasks.length} completed
+        </div>
+        {todayNeedsUpdate > 0 && (
+          <span className="badge badge-amber">
+            {todayNeedsUpdate} task{todayNeedsUpdate > 1 ? 's' : ''} need{todayNeedsUpdate > 1 ? '' : 's'} an update before check-out
+          </span>
+        )}
+      </div>
+      <table className="table-base">
+        <thead>
+          <tr>
+            <th>TASK</th>
+            <th>PROJECT</th>
+            <th>PRIORITY</th>
+            <th style={{ width: 180 }}>PROGRESS</th>
+            <th>REASON IF PENDING</th>
+            <th style={{ textAlign: 'right' }}>ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {todayTasks.length === 0 ? (
+            <tr>
+              <td colSpan={6} style={{ textAlign: 'center', padding: 28, color: '#697586' }}>
+                No tasks are due today.
+              </td>
+            </tr>
+          ) : (
+            todayTasks.map((t) => {
+              const done = isTaskDone(t);
+              const updatedToday = t.progressUpdatedOn === today;
+              return (
+                <tr key={t.id}>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{t.title || t.task}</div>
+                    {t.description && <div style={{ fontSize: 11.5, color: '#697586', maxWidth: 300 }}>{t.description}</div>}
+                  </td>
+                  <td style={{ color: '#697586' }}>{t.projectName || t.project || 'General'}</td>
+                  <td>
+                    <span className={`badge ${t.priority === 'High' || t.priority === 'Urgent' ? 'badge-red' : t.priority === 'Medium' ? 'badge-amber' : 'badge-gray'}`}>
+                      {t.priority || 'Medium'}
+                    </span>
+                  </td>
+                  <td>{progressBar(done ? 100 : Number(t.progress) || 0, done ? '#12B76A' : '#3B5BDB')}</td>
+                  <td style={{ fontSize: 12.5, color: '#475569', maxWidth: 260 }}>
+                    {done ? (
+                      <span className="badge badge-green">Completed</span>
+                    ) : updatedToday ? (
+                      t.delayReason
+                    ) : (
+                      <span style={{ color: '#B54708' }}>Update needed</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    {!done && (
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        <button
+                          className="btn-primary"
+                          style={{ fontSize: 11.5, padding: '4px 10px' }}
+                          onClick={() => handleTaskStatus(t, 'Completed')}
+                        >
+                          ✓ Mark Completed
+                        </button>
+                        <button className="btn-secondary" style={{ fontSize: 11.5, padding: '4px 10px' }} onClick={() => openProgress(t)}>
+                          {updatedToday ? 'Edit Progress' : 'Still Pending'}
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
   const payslipRows = (p: PayrollRecord) => {
     const adj = adjustmentsFor(adjustments, p.employeeId, p.month);
     const allowanceItems = adj.filter((a) => a.type === 'Allowance');
@@ -441,10 +433,10 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
         <div>
           <div className="page-title">Hi, {myEmployee.name.split(' ')[0]} 👋</div>
           <div style={{ fontSize: 13, color: '#697586', marginTop: 2 }}>
-            {myEmployee.role} · {myEmployee.dept} · {myEmployee.employeeId}
+            {myEmployee.role} · {myEmployee.employeeId}
           </div>
         </div>
-        <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', maxWidth: '100%' }}>
           <div>
             <div style={{ fontSize: 11.5, color: '#697586', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Today</div>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#1A1F36' }}>
@@ -452,6 +444,7 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
                 <>
                   <span className={`badge ${statusBadge[todayRecord.status] || 'badge-gray'}`}>{todayRecord.status}</span>{' '}
                   {todayRecord.checkIn && `In ${formatTime12h(todayRecord.checkIn)}`}
+                  {todayRecord.lunchOut && ` · Lunch ${formatLunch(todayRecord)}`}
                   {todayRecord.checkOut && ` · Out ${formatTime12h(todayRecord.checkOut)}`}
                 </>
               ) : (
@@ -459,14 +452,9 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
               )}
             </div>
           </div>
-          {!todayRecord && (
-            <button className="btn-primary" disabled={busy} onClick={handleCheckIn}>
-              Check In
-            </button>
-          )}
-          {todayRecord && todayRecord.checkIn && !todayRecord.checkOut && (todayRecord.status === 'Present' || todayRecord.status === 'Late' || todayRecord.status === 'Half Day') && (
-            <button className="btn-secondary" disabled={busy} onClick={handleCheckOut}>
-              Check Out
+          {onOpenAttendance && (
+            <button className={todayRecord ? 'btn-secondary' : 'btn-primary'} onClick={onOpenAttendance}>
+              {todayRecord ? 'My Attendance →' : 'Check In →'}
             </button>
           )}
         </div>
@@ -496,11 +484,20 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
           {TABS.map((t) => (
             <button key={t.key} className={`tab-btn${tab === t.key ? ' active' : ''}`} style={{ padding: '10px 14px' }} onClick={() => setTab(t.key)}>
               {t.label}
+              {t.key === 'today' && todayNeedsUpdate > 0 && (
+                <span style={{ marginLeft: 6, background: '#F79009', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 6px' }}>
+                  {todayNeedsUpdate}
+                </span>
+              )}
             </button>
           ))}
         </div>
 
         <div style={{ padding: 20 }}>
+          {tab === 'today' && todayTasksPanel()}
+
+          {tab === 'overview' && todayTasks.length > 0 && <div style={{ marginBottom: 20 }}>{todayTasksPanel()}</div>}
+
           {tab === 'overview' && (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 16 }}>
               <div>
@@ -527,7 +524,9 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
                 <div style={{ background: '#F8F9FC', borderRadius: 12, padding: 16 }}>
                   <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36', marginBottom: 8 }}>Working hours</div>
                   <div style={{ fontSize: 12.5, color: '#475569', lineHeight: 1.6 }}>
-                    9:00 AM – 6:00 PM · Half day 2:00 PM – 6:00 PM. Time after 6:00 PM at check-out is recorded as overtime.
+                    9:00 AM – 6:00 PM. Check in by 9:00 AM; a later check-in needs admin approval. Lunch break is up to 1 hour.
+                    Check out from 6:00 PM once today's tasks are completed, otherwise send a check-out request. Time after 6:00 PM
+                    is recorded as overtime.
                   </div>
                 </div>
               </div>
@@ -535,54 +534,6 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
           )}
 
           {tab === 'tasks' && taskTable(myTasks)}
-
-          {tab === 'attendance' && (
-            <div>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-                <input className="input-base" type="month" style={{ width: 180 }} value={month} onChange={(e) => setMonth(e.target.value)} />
-                {['Present', 'Late', 'Half Day', 'On Leave', 'Absent'].map((s) => (
-                  <span key={s} className={`badge ${statusBadge[s]}`}>
-                    {s}: {counts[s] || 0}
-                  </span>
-                ))}
-                <span className="badge badge-blue">Overtime: {counts.overtime || 0}h</span>
-              </div>
-              <table className="table-base">
-                <thead>
-                  <tr>
-                    <th>DATE</th>
-                    <th>STATUS</th>
-                    <th>CHECK-IN</th>
-                    <th>CHECK-OUT</th>
-                    <th>OVERTIME</th>
-                    <th>NOTES</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthAttendance.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', padding: 28, color: '#697586' }}>
-                        No attendance recorded for {monthLabel(month)}.
-                      </td>
-                    </tr>
-                  ) : (
-                    monthAttendance.map((a) => (
-                      <tr key={a.id}>
-                        <td style={{ fontWeight: 600 }}>{new Date(a.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</td>
-                        <td>
-                          <span className={`badge ${statusBadge[a.status] || 'badge-gray'}`}>{a.status}</span>
-                        </td>
-                        <td>{formatTime12h(a.checkIn)}</td>
-                        <td>{formatTime12h(a.checkOut)}</td>
-                        <td>{a.overtimeHours ? `${a.overtimeHours}h` : '—'}</td>
-                        <td style={{ color: '#697586', fontSize: 12.5 }}>{a.notes || '—'}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
 
           {tab === 'leave' && (
             <div>
@@ -636,6 +587,26 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
           )}
 
           {tab === 'salary' && (
+            <>
+            <div style={{ background: '#F8F9FC', border: '1px solid #E5E9F2', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36', marginBottom: 10 }}>{monthLabel(month)} so far</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <Stat label="Per Day" value={formatRate(monthPay.rates.daily)} sub={`${monthPay.workingDays} working days`} />
+                <Stat label="Per Hour" value={formatRate(monthPay.rates.hourly)} />
+                <Stat label="Per Minute" value={formatRate(monthPay.rates.perMinute)} />
+                <Stat label="Earned So Far" value={inr(monthPay.earnedToDate)} color="#12B76A" sub={`${formatDuration(monthPay.workedMinutes)} worked`} />
+                <Stat
+                  label="Deducted So Far"
+                  value={inr(monthPay.absentDeduction + monthPay.unpaidLeaveDeduction + monthPay.shortTimeDeduction)}
+                  color="#EF4444"
+                  sub={`${monthPay.absentDays} absent · ${monthPay.shortMinutes} min short`}
+                />
+              </div>
+              <div style={{ fontSize: 11.5, color: '#697586', marginTop: 8 }}>
+                Late arrival, early leave and lunch beyond 1 hour are deducted per minute. Absent days and unpaid leave are deducted per day.
+                Incentives and bonuses added by the admin appear on your payslip.
+              </div>
+            </div>
             <table className="table-base">
               <thead>
                 <tr>
@@ -676,6 +647,7 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
                 )}
               </tbody>
             </table>
+            </>
           )}
         </div>
       </div>
@@ -745,6 +717,52 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
         </div>
       )}
 
+      {/* Task progress modal */}
+      {progressTask && (
+        <div className="modal-overlay" onClick={() => !busy && setProgressTask(null)}>
+          <div className="modal-box" style={{ width: 460, maxWidth: '100%', padding: 28 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 700, fontSize: 17, color: '#1A1F36', marginBottom: 4 }}>Task still pending</div>
+            <div style={{ fontSize: 12.5, color: '#697586', marginBottom: 16 }}>{progressTask.title || progressTask.task}</div>
+            <form onSubmit={handleSaveProgress}>
+              <label style={labelStyle}>How much is completed? *</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={progressForm.progress === p ? 'btn-primary' : 'btn-secondary'}
+                    style={{ fontSize: 12, padding: '5px 10px', minWidth: 48 }}
+                    onClick={() => setProgressForm({ ...progressForm, progress: p })}
+                  >
+                    {p}%
+                  </button>
+                ))}
+              </div>
+              <label style={labelStyle}>Why is it late / still pending? *</label>
+              <textarea
+                className="input-base"
+                rows={3}
+                style={{ width: '100%' }}
+                placeholder="e.g. Waiting for content from the client / Bug took longer than expected"
+                value={progressForm.reason}
+                onChange={(e) => setProgressForm({ ...progressForm, reason: e.target.value })}
+              />
+              <div style={{ fontSize: 11.5, color: '#697586', marginTop: 6 }}>
+                If the task is done, close this and use "Mark Completed" instead.
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+                <button type="button" className="btn-secondary" onClick={() => setProgressTask(null)} disabled={busy}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={busy}>
+                  {busy ? 'Saving...' : 'Save Progress'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Payslip modal */}
       {payslip && (
         <div className="modal-overlay" onClick={() => setPayslip(null)}>
@@ -753,7 +771,7 @@ export default function MyWorkspace({ initialTab = 'overview' }: { initialTab?: 
               <div>
                 <div style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 700, fontSize: 17, color: '#1A1F36' }}>Payslip · {monthLabel(payslip.month)}</div>
                 <div style={{ fontSize: 12.5, color: '#697586' }}>
-                  {payslip.employeeName} · {payslip.employeeCode} · {payslip.department}
+                  {payslip.employeeName} · {payslip.employeeCode} · {payslip.role}
                 </div>
               </div>
               <span className={`badge ${statusBadge[payslip.status] || 'badge-amber'}`}>{payslip.status}</span>

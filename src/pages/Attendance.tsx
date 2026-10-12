@@ -1,13 +1,23 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Employee, type AttendanceRecord } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   getAllAttendance,
   addAttendance,
   updateAttendance,
   deleteAttendance,
   bulkSaveAttendance,
+  decideAttendanceRequest,
 } from '../services/attendanceService';
+import {
+  useAttendancePolicy,
+  saveAttendancePolicy,
+  getPublicIp,
+  type AttendancePolicy,
+} from '../services/attendancePolicyService';
+import { isOwnerOrAdminRole } from '../services/authService';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
   Calendar,
@@ -24,15 +34,28 @@ import {
   CheckSquare,
   CalendarDays,
   UserX,
+  LogOut,
+  Wifi,
+  Hourglass,
 } from 'lucide-react';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
+import AttendanceRequestBadges from '../components/AttendanceRequestBadges';
 import {
   WORK_START,
-  WORK_END,
-  defaultTimesFor,
+  LUNCH_MAX_MINUTES,
+  REQUEST_LABELS,
+  defaultCheckInFor,
   statusHasTimes,
   formatTime12h,
+  formatLunch,
+  lunchMinutes,
+  minutesOf,
+  overtimeFor,
+  toHHMM,
+  isCheckedIn,
+  pendingRequests,
   toTimeInputValue,
+  type RequestKind,
 } from '../utils/attendanceTimes';
 
 type ViewTab = 'daily' | 'monthly';
@@ -50,6 +73,25 @@ interface SingleFormState {
 
 export default function Attendance() {
   const { showToast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = isOwnerOrAdminRole(user?.role);
+  const adminName = user?.name || user?.email || 'Admin';
+  const { policy } = useAttendancePolicy();
+
+  // Approvals
+  const [remarks, setRemarks] = useState<Record<string, string>>({});
+  const [decidingKey, setDecidingKey] = useState('');
+
+  // Check-out from the list
+  const [checkOutTarget, setCheckOutTarget] = useState<AttendanceRecord | null>(null);
+  const [checkOutTime, setCheckOutTime] = useState('');
+
+  // Office network settings
+  const [showNetworkModal, setShowNetworkModal] = useState(false);
+  const [networkDraft, setNetworkDraft] = useState<AttendancePolicy>({ requireOfficeNetwork: false, networks: [] });
+  const [currentIp, setCurrentIp] = useState('');
+  const [ipError, setIpError] = useState('');
+  const [newNetworkLabel, setNewNetworkLabel] = useState('');
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
   const currentMonthStr = useMemo(() => new Date().toISOString().slice(0, 7), []);
@@ -60,7 +102,6 @@ export default function Attendance() {
 
   // Filters
   const [search, setSearch] = useState('');
-  const [deptFilter, setDeptFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
 
   // Modals
@@ -77,7 +118,7 @@ export default function Attendance() {
     date: todayStr,
     status: 'Present',
     checkIn: WORK_START,
-    checkOut: WORK_END,
+    checkOut: '',
     overtimeHours: '',
     notes: '',
   });
@@ -92,8 +133,6 @@ export default function Attendance() {
       dept: string;
       status: AttendanceStatus;
       checkIn: string;
-      checkOut: string;
-      overtimeHours: string;
       notes: string;
       existingId?: string | number;
     }>
@@ -107,8 +146,8 @@ export default function Attendance() {
   }, []);
 
   // Live queries from Dexie cache
-  const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
-  const attendanceRecords = useLiveQuery(() => db.attendance.toArray(), []) || [];
+  const employees = useLiveQuery(async () => newestFirst(await db.employees.toArray(), (e) => e.joiningDate), []) || [];
+  const attendanceRecords = useLiveQuery(async () => newestFirst(await db.attendance.toArray(), (a) => a.date), []) || [];
 
   // Active employees list
   const activeEmployees = useMemo(() => {
@@ -200,8 +239,6 @@ export default function Attendance() {
       const empCode = (emp.employeeId || emp.id || '').toString().toLowerCase();
 
       const matchesSearch = !q || empName.includes(q) || empCode.includes(q);
-      const matchesDept = deptFilter === 'All' || emp.dept === deptFilter;
-
       const rec =
         dailyAttendanceMap.get(String(emp.id)) ||
         dailyAttendanceMap.get(String(emp.employeeId));
@@ -209,9 +246,9 @@ export default function Attendance() {
 
       const matchesStatus = statusFilter === 'All' || currentStatus === statusFilter;
 
-      return matchesSearch && matchesDept && matchesStatus;
+      return matchesSearch && matchesStatus;
     });
-  }, [activeEmployees, search, deptFilter, statusFilter, dailyAttendanceMap]);
+  }, [activeEmployees, search, statusFilter, dailyAttendanceMap]);
 
   // Monthly View Employee Summaries
   const monthlyEmployeeSummaries = useMemo(() => {
@@ -223,8 +260,7 @@ export default function Attendance() {
         const empName = (emp.name || '').toLowerCase();
         const empCode = (emp.employeeId || emp.id || '').toString().toLowerCase();
         const matchesSearch = !q || empName.includes(q) || empCode.includes(q);
-        const matchesDept = deptFilter === 'All' || emp.dept === deptFilter;
-        return matchesSearch && matchesDept;
+        return matchesSearch;
       })
       .map((emp) => {
         const empRecs = monthRecords.filter(
@@ -264,7 +300,7 @@ export default function Attendance() {
           empPercentage,
         };
       });
-  }, [activeEmployees, attendanceRecords, selectedMonth, search, deptFilter]);
+  }, [activeEmployees, attendanceRecords, selectedMonth, search]);
 
   // Single Modal Handlers
   const handleOpenMarkModal = (emp?: Employee, existingRec?: AttendanceRecord) => {
@@ -302,7 +338,7 @@ export default function Attendance() {
           date: selectedDate,
           status: 'Present',
           checkIn: WORK_START,
-          checkOut: WORK_END,
+          checkOut: '',
           overtimeHours: '',
           notes: '',
         });
@@ -314,7 +350,7 @@ export default function Attendance() {
         date: selectedDate,
         status: 'Present',
         checkIn: WORK_START,
-        checkOut: WORK_END,
+        checkOut: '',
         overtimeHours: '',
         notes: '',
       });
@@ -421,12 +457,9 @@ export default function Attendance() {
         employeeId: emp.id || '',
         employeeCode: emp.employeeId || String(emp.id || ''),
         name: emp.name,
-        dept: emp.dept || 'Development',
+        dept: emp.dept || '',
         status: (rec?.status || 'Present') as AttendanceStatus,
-        ...(rec
-          ? { checkIn: toTimeInputValue(rec.checkIn), checkOut: toTimeInputValue(rec.checkOut) }
-          : defaultTimesFor('Present')),
-        overtimeHours: rec?.overtimeHours ? String(rec.overtimeHours) : '',
+        checkIn: rec ? toTimeInputValue(rec.checkIn) : defaultCheckInFor('Present'),
         notes: rec?.notes || '',
         existingId: rec?.id,
       };
@@ -441,8 +474,7 @@ export default function Attendance() {
       prev.map((item) => ({
         ...item,
         status,
-        ...defaultTimesFor(status),
-        overtimeHours: statusHasTimes(status) ? item.overtimeHours : '',
+        checkIn: defaultCheckInFor(status),
       }))
     );
   };
@@ -451,21 +483,24 @@ export default function Attendance() {
     if (bulkState.length === 0) return;
     setIsSubmitting(true);
     try {
-      const recordsToSave = bulkState.map((item) => ({
-        existingId: item.existingId,
-        record: {
-          employeeId: item.employeeId,
-          employeeCode: item.employeeCode,
-          employeeName: item.name,
-          dept: item.dept,
-          date: selectedDate,
-          status: item.status,
-          checkIn: statusHasTimes(item.status) ? item.checkIn.trim() : '',
-          checkOut: statusHasTimes(item.status) ? item.checkOut.trim() : '',
-          overtimeHours: statusHasTimes(item.status) ? Math.max(0, Number(item.overtimeHours) || 0) : 0,
-          notes: item.notes.trim(),
-        },
-      }));
+      const recordsToSave = bulkState.map((item) => {
+        const hasTimes = statusHasTimes(item.status);
+        return {
+          existingId: item.existingId,
+          record: {
+            employeeId: item.employeeId,
+            employeeCode: item.employeeCode,
+            employeeName: item.name,
+            dept: item.dept,
+            date: selectedDate,
+            status: item.status,
+            checkIn: hasTimes ? item.checkIn.trim() : '',
+            // Check-out is recorded at sign-off: keep an existing one, clear it only for Absent / On Leave
+            ...(!hasTimes || !item.existingId ? { checkOut: '', overtimeHours: 0 } : {}),
+            notes: item.notes.trim(),
+          },
+        };
+      });
 
       await bulkSaveAttendance(recordsToSave);
       showToast(`Bulk attendance saved for ${recordsToSave.length} employees`, 'success');
@@ -473,6 +508,111 @@ export default function Attendance() {
     } catch (err: any) {
       console.error('Failed bulk attendance save:', err);
       showToast(err?.message || 'Failed to save bulk attendance', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Pending late check-in / long lunch / check-out requests from employees, newest first
+  const pendingApprovals = useMemo(
+    () =>
+      attendanceRecords
+        .flatMap((rec) => pendingRequests(rec).map((p) => ({ rec, ...p, key: `${rec.id}:${p.kind}` })))
+        .sort((a, b) => b.rec.date.localeCompare(a.rec.date) || b.request.requestedAt.localeCompare(a.request.requestedAt)),
+    [attendanceRecords]
+  );
+
+  const handleDecide = async (rec: AttendanceRecord, kind: RequestKind, approve: boolean) => {
+    const key = `${rec.id}:${kind}`;
+    setDecidingKey(key);
+    try {
+      await decideAttendanceRequest(rec, kind, approve, adminName, remarks[key] || '');
+      showToast(`${REQUEST_LABELS[kind]} for ${rec.employeeName} ${approve ? 'approved' : 'rejected'}.`, approve ? 'success' : 'info');
+      setRemarks((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } catch (err: any) {
+      showToast(err?.message || 'Could not save the decision.', 'error');
+    } finally {
+      setDecidingKey('');
+    }
+  };
+
+  const openCheckOut = (rec: AttendanceRecord) => {
+    setCheckOutTarget(rec);
+    setCheckOutTime(rec.checkOutRequest?.status === 'Pending' ? rec.checkOutRequest.time : toHHMM(new Date()));
+  };
+
+  const handleAdminCheckOut = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkOutTarget?.id) return;
+    if (!checkOutTime) {
+      showToast('Please enter the check-out time.', 'error');
+      return;
+    }
+    if (checkOutTarget.checkIn && minutesOf(checkOutTime) <= minutesOf(checkOutTarget.checkIn)) {
+      showToast('Check-out must be after the check-in time.', 'error');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const pending = checkOutTarget.checkOutRequest?.status === 'Pending' ? checkOutTarget.checkOutRequest : null;
+      await updateAttendance(checkOutTarget.id, {
+        checkOut: checkOutTime,
+        overtimeHours: overtimeFor(checkOutTime),
+        // Closing the day from here also settles any check-out request the employee sent
+        ...(pending
+          ? { checkOutRequest: { ...pending, status: 'Approved' as const, decidedAt: new Date().toISOString(), decidedBy: adminName } }
+          : {}),
+      });
+      showToast(`${checkOutTarget.employeeName} checked out at ${formatTime12h(checkOutTime)}.`, 'success');
+      setCheckOutTarget(null);
+    } catch (err: any) {
+      showToast(err?.message || 'Check-out failed.', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openNetworkModal = async () => {
+    setNetworkDraft({ requireOfficeNetwork: policy.requireOfficeNetwork, networks: [...policy.networks] });
+    setNewNetworkLabel('');
+    setCurrentIp('');
+    setIpError('');
+    setShowNetworkModal(true);
+    try {
+      setCurrentIp(await getPublicIp());
+    } catch (err: any) {
+      setIpError(err?.message || 'Could not detect this network.');
+    }
+  };
+
+  const handleAddCurrentNetwork = () => {
+    if (!currentIp || networkDraft.networks.some((n) => n.ip === currentIp)) return;
+    setNetworkDraft((prev) => ({
+      requireOfficeNetwork: true,
+      networks: [
+        ...prev.networks,
+        { ip: currentIp, label: newNetworkLabel.trim() || 'Office WiFi', addedAt: new Date().toISOString() },
+      ],
+    }));
+    setNewNetworkLabel('');
+  };
+
+  const handleSaveNetwork = async () => {
+    if (networkDraft.requireOfficeNetwork && networkDraft.networks.length === 0) {
+      showToast('Add at least one office network, or turn the restriction off.', 'error');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await saveAttendancePolicy(networkDraft, adminName);
+      showToast('Office network settings saved.', 'success');
+      setShowNetworkModal(false);
+    } catch (err: any) {
+      showToast(err?.message || 'Could not save office network settings.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -535,6 +675,17 @@ export default function Attendance() {
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
+              onClick={openNetworkModal}
+              title="Limit employee check-in / lunch / check-out to the office WiFi"
+            >
+              <Wifi size={14} style={{ color: policy.requireOfficeNetwork && policy.networks.length ? '#12B76A' : '#697586' }} />
+              Office Network
+            </button>
+          )}
           {activeEmployees.length > 0 && (
             <>
               <button
@@ -805,6 +956,105 @@ export default function Attendance() {
         )}
       </div>
 
+      {/* Pending Approvals */}
+      {pendingApprovals.length > 0 && (
+        <div className="card" style={{ marginBottom: 20, border: '1px solid #FEDF89' }}>
+          <div
+            style={{
+              padding: '12px 16px',
+              borderBottom: '1px solid #FEDF89',
+              background: '#FFFAEB',
+              borderRadius: '12px 12px 0 0',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontWeight: 700,
+              fontSize: 14,
+              color: '#B54708',
+            }}
+          >
+            <Hourglass size={15} /> Pending Approvals ({pendingApprovals.length})
+            <span style={{ fontWeight: 500, fontSize: 12, color: '#697586' }}>
+              · Late check-ins, long lunch breaks and early / incomplete-task check-outs
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th>EMPLOYEE</th>
+                  <th>DATE</th>
+                  <th>REQUEST</th>
+                  <th>TIME</th>
+                  <th>WHY IT NEEDS APPROVAL</th>
+                  <th>EMPLOYEE'S REASON</th>
+                  <th>REMARKS</th>
+                  <th style={{ textAlign: 'right' }}>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingApprovals.map(({ rec, kind, request, key }) => (
+                  <tr key={key}>
+                    <td>
+                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>{rec.employeeName}</div>
+                      <div style={{ fontSize: 11.5, color: '#697586' }}>{rec.employeeCode}</div>
+                    </td>
+                    <td style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{rec.date}</td>
+                    <td>
+                      <span className="badge badge-amber">{REQUEST_LABELS[kind]}</span>
+                    </td>
+                    <td style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
+                      {kind === 'lunchRequest' ? formatLunch(rec) : formatTime12h(request.time)}
+                    </td>
+                    <td style={{ fontSize: 12, color: '#B54708', maxWidth: 260 }}>
+                      {request.reasons.map((r) => (
+                        <div key={r}>• {r}</div>
+                      ))}
+                    </td>
+                    <td style={{ fontSize: 12.5, color: '#475569', maxWidth: 220 }}>{request.note || '—'}</td>
+                    <td>
+                      <input
+                        className="input-base"
+                        style={{ fontSize: 12, padding: '4px 8px', width: 150 }}
+                        placeholder="Optional"
+                        value={remarks[key] || ''}
+                        onChange={(e) => setRemarks((prev) => ({ ...prev, [key]: e.target.value }))}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          style={{ fontSize: 11.5, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
+                          disabled={decidingKey === key}
+                          onClick={() => handleDecide(rec, kind, true)}
+                        >
+                          <CheckCircle2 size={12} /> Approve
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: 11.5, padding: '4px 10px', color: '#EF4444', borderColor: '#FCA5A5', display: 'flex', alignItems: 'center', gap: 4 }}
+                          disabled={decidingKey === key}
+                          onClick={() => handleDecide(rec, kind, false)}
+                        >
+                          <XCircle size={12} /> Reject
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ padding: '8px 16px', fontSize: 11.5, color: '#697586' }}>
+            Approving a late check-in marks the day Late; rejecting it marks the day Absent. Approving a check-out records it at the
+            time the employee asked; rejecting keeps them checked in.
+          </div>
+        </div>
+      )}
+
       {/* Tabs & Controls */}
       <div className="card" style={{ marginBottom: 20 }}>
         <div
@@ -908,19 +1158,6 @@ export default function Attendance() {
               />
             </div>
 
-            <select
-              className="select-base"
-              value={deptFilter}
-              onChange={(e) => setDeptFilter(e.target.value)}
-              style={{ fontSize: 13 }}
-            >
-              <option value="All">All Depts</option>
-              <option value="Management">Management</option>
-              <option value="Development">Development</option>
-              <option value="Design">Design</option>
-              <option value="Marketing">Marketing</option>
-            </select>
-
             {activeTab === 'daily' && (
               <select
                 className="select-base"
@@ -947,9 +1184,9 @@ export default function Attendance() {
               <tr>
                 <th>EMPLOYEE</th>
                 <th>EMPLOYEE ID</th>
-                <th>DEPARTMENT</th>
                 <th>STATUS</th>
                 <th>CHECK-IN</th>
+                <th>LUNCH</th>
                 <th>CHECK-OUT</th>
                 <th>OVERTIME</th>
                 <th>NOTES</th>
@@ -1022,12 +1259,19 @@ export default function Attendance() {
                         {emp.employeeId || emp.id}
                       </td>
                       <td>
-                        <span className="badge badge-blue">{emp.dept}</span>
-                      </td>
-                      <td>
                         <span className={`badge ${badgeClass}`}>{currentStatus}</span>
+                        {rec && <AttendanceRequestBadges rec={rec} />}
                       </td>
                       <td style={{ fontSize: 13, color: '#697586' }}>{formatTime12h(rec?.checkIn)}</td>
+                      <td
+                        style={{
+                          fontSize: 12.5,
+                          whiteSpace: 'nowrap',
+                          color: rec && (lunchMinutes(rec) || 0) > LUNCH_MAX_MINUTES ? '#EF4444' : '#697586',
+                        }}
+                      >
+                        {rec ? formatLunch(rec) : '—'}
+                      </td>
                       <td style={{ fontSize: 13, color: '#697586' }}>{formatTime12h(rec?.checkOut)}</td>
                       <td style={{ fontSize: 13, color: rec?.overtimeHours ? '#3B5BDB' : '#697586', fontWeight: rec?.overtimeHours ? 600 : 400 }}>
                         {rec?.overtimeHours ? `${rec.overtimeHours}h` : '—'}
@@ -1037,6 +1281,16 @@ export default function Attendance() {
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                          {rec && isCheckedIn(rec) && !rec.checkOut && (
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{ fontSize: 11.5, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
+                              onClick={() => openCheckOut(rec)}
+                            >
+                              <LogOut size={12} /> Check Out
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="btn-secondary"
@@ -1078,7 +1332,6 @@ export default function Attendance() {
               <tr>
                 <th>EMPLOYEE</th>
                 <th>EMPLOYEE ID</th>
-                <th>DEPARTMENT</th>
                 <th style={{ textAlign: 'center' }}>PRESENT</th>
                 <th style={{ textAlign: 'center' }}>ABSENT</th>
                 <th style={{ textAlign: 'center' }}>ON LEAVE</th>
@@ -1090,7 +1343,7 @@ export default function Attendance() {
             <tbody>
               {monthlyEmployeeSummaries.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: 'center', padding: '32px', color: '#697586' }}>
+                  <td colSpan={8} style={{ textAlign: 'center', padding: '32px', color: '#697586' }}>
                     No matching monthly attendance records found for {selectedMonth}.
                   </td>
                 </tr>
@@ -1133,9 +1386,6 @@ export default function Attendance() {
                       </td>
                       <td style={{ fontSize: 12.5, color: '#3B5BDB', fontWeight: 600 }}>
                         {emp.employeeId || emp.id}
-                      </td>
-                      <td>
-                        <span className="badge badge-blue">{emp.dept}</span>
                       </td>
                       <td style={{ textAlign: 'center', fontWeight: 700, color: '#12B76A' }}>
                         {item.present}
@@ -1255,7 +1505,8 @@ export default function Attendance() {
                       setSingleForm((prev) => ({
                         ...prev,
                         status,
-                        ...defaultTimesFor(status),
+                        checkIn: defaultCheckInFor(status),
+                        checkOut: statusHasTimes(status) ? prev.checkOut : '',
                         overtimeHours: statusHasTimes(status) ? prev.overtimeHours : '',
                       }));
                       if (singleErrors.status) setSingleErrors((prev) => ({ ...prev, status: '' }));
@@ -1269,7 +1520,8 @@ export default function Attendance() {
                   </select>
                 </div>
 
-                {/* Check In, Check Out & Overtime (not used for Absent / On Leave) */}
+                {/* Check-in only; check-out is recorded from the list when the employee signs off.
+                    Check-out & overtime are editable only on a day that was already checked out. */}
                 {statusHasTimes(singleForm.status) ? (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                     <div>
@@ -1284,6 +1536,8 @@ export default function Attendance() {
                         onChange={(e) => setSingleForm((prev) => ({ ...prev, checkIn: e.target.value }))}
                       />
                     </div>
+                    {editingRecord?.checkOut ? (
+                    <>
                     <div>
                       <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
                         Check-Out Time
@@ -1312,11 +1566,16 @@ export default function Attendance() {
                         onChange={(e) => setSingleForm((prev) => ({ ...prev, overtimeHours: e.target.value }))}
                       />
                     </div>
+                    </>
+                    ) : null}
                     {singleErrors.overtimeHours && (
                       <div style={{ gridColumn: 'span 3', color: '#EF4444', fontSize: 11.5 }}>{singleErrors.overtimeHours}</div>
                     )}
                     <div style={{ gridColumn: 'span 3', fontSize: 11.5, color: '#697586', marginTop: -4 }}>
-                      Working hours are 9:00 AM – 6:00 PM (half day: 2:00 PM – 6:00 PM). Add any extra hours as Overtime.
+                      Working hours are 9:00 AM – 6:00 PM (half day: 2:00 PM – 6:00 PM).{' '}
+                      {editingRecord?.checkOut
+                        ? 'Time after 6:00 PM counts as overtime.'
+                        : 'Check-out is recorded later from the list (or by the employee) when they sign off.'}
                     </div>
                   </div>
                 ) : (
@@ -1413,8 +1672,6 @@ export default function Attendance() {
                     <th>EMPLOYEE</th>
                     <th>STATUS</th>
                     <th>CHECK-IN</th>
-                    <th>CHECK-OUT</th>
-                    <th>OT (HRS)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1423,7 +1680,7 @@ export default function Attendance() {
                       <td>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{item.name}</div>
                         <div style={{ fontSize: 11, color: '#697586' }}>
-                          {item.employeeCode} • {item.dept}
+                          {item.employeeCode}
                         </div>
                       </td>
                       <td>
@@ -1436,12 +1693,7 @@ export default function Attendance() {
                             setBulkState((prev) =>
                               prev.map((row, i) =>
                                 i === idx
-                                  ? {
-                                      ...row,
-                                      status: val,
-                                      ...defaultTimesFor(val),
-                                      overtimeHours: statusHasTimes(val) ? row.overtimeHours : '',
-                                    }
+                                  ? { ...row, status: val, checkIn: defaultCheckInFor(val) }
                                   : row
                               )
                             );
@@ -1470,41 +1722,9 @@ export default function Attendance() {
                               }}
                             />
                           </td>
-                          <td>
-                            <input
-                              type="time"
-                              className="input-base"
-                              style={{ fontSize: 12, padding: '4px 8px', width: 110 }}
-                              value={item.checkOut}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setBulkState((prev) =>
-                                  prev.map((row, i) => (i === idx ? { ...row, checkOut: val } : row))
-                                );
-                              }}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              min="0"
-                              max="16"
-                              step="0.5"
-                              className="input-base"
-                              placeholder="0"
-                              style={{ fontSize: 12, padding: '4px 8px', width: 70 }}
-                              value={item.overtimeHours}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setBulkState((prev) =>
-                                  prev.map((row, i) => (i === idx ? { ...row, overtimeHours: val } : row))
-                                );
-                              }}
-                            />
-                          </td>
                         </>
                       ) : (
-                        <td colSpan={3} style={{ fontSize: 12, color: '#94A3B8' }}>
+                        <td style={{ fontSize: 12, color: '#94A3B8' }}>
                           No time for {item.status}
                         </td>
                       )}
@@ -1530,6 +1750,135 @@ export default function Attendance() {
                 disabled={isSubmitting}
               >
                 {isSubmitting ? 'Saving Batch...' : 'Save Bulk Attendance'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Check-Out Modal (from the daily list) */}
+      {checkOutTarget && (
+        <div className="modal-overlay" onClick={() => !isSubmitting && setCheckOutTarget(null)}>
+          <div className="modal-box" style={{ width: 400, maxWidth: '100%', padding: 24 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+              Check Out {checkOutTarget.employeeName}
+            </div>
+            <div style={{ fontSize: 12.5, color: '#697586', marginBottom: 16 }}>
+              {checkOutTarget.date} · Checked in at {formatTime12h(checkOutTarget.checkIn)}
+              {checkOutTarget.lunchOut ? ` · Lunch ${formatLunch(checkOutTarget)}` : ''}
+            </div>
+            {checkOutTarget.checkOutRequest?.status === 'Pending' && (
+              <div style={{ fontSize: 12, color: '#B54708', background: '#FFFAEB', border: '1px solid #FEDF89', borderRadius: 8, padding: '8px 12px', marginBottom: 14 }}>
+                This employee asked to check out at {formatTime12h(checkOutTarget.checkOutRequest.time)}. Saving approves that request.
+              </div>
+            )}
+            <form onSubmit={handleAdminCheckOut}>
+              <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>Check-Out Time</label>
+              <input
+                type="time"
+                className="input-base"
+                style={{ width: '100%' }}
+                value={checkOutTime}
+                onChange={(e) => setCheckOutTime(e.target.value)}
+              />
+              <div style={{ fontSize: 11.5, color: '#697586', marginTop: 6 }}>
+                {overtimeFor(checkOutTime) > 0 ? `${overtimeFor(checkOutTime)}h overtime will be recorded.` : 'Time after 6:00 PM counts as overtime.'}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+                <button type="button" className="btn-secondary" onClick={() => setCheckOutTarget(null)} disabled={isSubmitting}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={isSubmitting}>
+                  {isSubmitting ? 'Saving...' : 'Check Out'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Office Network Modal */}
+      {showNetworkModal && (
+        <div className="modal-overlay" onClick={() => !isSubmitting && setShowNetworkModal(false)}>
+          <div className="modal-box" style={{ width: 520, maxWidth: '100%', padding: 24 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 700, fontSize: 16, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Wifi size={17} style={{ color: '#3B5BDB' }} /> Office Network
+            </div>
+            <div style={{ fontSize: 12.5, color: '#697586', marginBottom: 16, lineHeight: 1.5 }}>
+              Employees can check in, take lunch and check out only from these networks. Browsers can't read WiFi names, so a
+              network is identified by its public internet address. Every device on the office WiFi shares it.
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#1A1F36', cursor: 'pointer', marginBottom: 14 }}>
+              <input
+                type="checkbox"
+                checked={networkDraft.requireOfficeNetwork}
+                onChange={(e) => setNetworkDraft((prev) => ({ ...prev, requireOfficeNetwork: e.target.checked }))}
+              />
+              Require office WiFi for employee check-in, lunch and check-out
+            </label>
+
+            <div style={{ background: '#F8F9FC', border: '1px solid #E5E9F2', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>This device's network</div>
+              {ipError ? (
+                <div style={{ fontSize: 12.5, color: '#EF4444' }}>{ipError}</div>
+              ) : !currentIp ? (
+                <div style={{ fontSize: 12.5, color: '#697586' }}>Detecting…</div>
+              ) : networkDraft.networks.some((n) => n.ip === currentIp) ? (
+                <div style={{ fontSize: 12.5, color: '#12B76A', fontWeight: 600 }}>{currentIp} · already an office network</div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#1A1F36' }}>{currentIp}</span>
+                  <input
+                    className="input-base"
+                    style={{ fontSize: 12.5, flex: '1 1 140px' }}
+                    placeholder="Label, e.g. Office WiFi"
+                    value={newNetworkLabel}
+                    onChange={(e) => setNewNetworkLabel(e.target.value)}
+                  />
+                  <button type="button" className="btn-primary" style={{ fontSize: 12.5 }} onClick={handleAddCurrentNetwork}>
+                    <Plus size={13} style={{ verticalAlign: -2 }} /> Add this network
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>Allowed networks</div>
+            {networkDraft.networks.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: '#697586', marginBottom: 6 }}>
+                None yet. Open this screen on a device connected to the office WiFi and click "Add this network".
+              </div>
+            ) : (
+              networkDraft.networks.map((n) => (
+                <div
+                  key={n.ip}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #E5E9F2', fontSize: 13 }}
+                >
+                  <span>
+                    <strong>{n.label}</strong> <span style={{ color: '#697586' }}>· {n.ip}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ fontSize: 11.5, padding: '3px 8px', color: '#EF4444', borderColor: '#FCA5A5' }}
+                    onClick={() => setNetworkDraft((prev) => ({ ...prev, networks: prev.networks.filter((x) => x.ip !== n.ip) }))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))
+            )}
+            <div style={{ fontSize: 11.5, color: '#697586', marginTop: 10, lineHeight: 1.5 }}>
+              If your internet provider changes the office address (for example after a router restart) employees will be blocked.
+              Open this screen from the office and add the new network.
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowNetworkModal(false)} disabled={isSubmitting}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary" onClick={handleSaveNetwork} disabled={isSubmitting}>
+                {isSubmitting ? 'Saving...' : 'Save'}
               </button>
             </div>
           </div>

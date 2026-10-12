@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../db/database';
+import { pendingRequests } from '../utils/attendanceTimes';
 import logo from '../assets/legendary-one-logo.png';
 
 type NavScreen =
@@ -9,7 +10,7 @@ type NavScreen =
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance';
 
 interface Props {
   current: string;
@@ -20,6 +21,7 @@ interface Props {
 const nav = [
   { key: 'dashboard', label: 'Dashboard', icon: '⊞' },
   { key: 'my-workspace', label: 'My Workspace', icon: '☺' },
+  { key: 'my-attendance', label: 'My Attendance', icon: '◷' },
   { section: 'CRM' },
   { key: 'leads', label: 'Leads', icon: '◈' },
   { key: 'clients', label: 'Clients', icon: '◉' },
@@ -58,6 +60,9 @@ export default function Layout({ current, onNav, children }: Props) {
   // Live query search targets
   const liveClients = useLiveQuery(() => db.clients.toArray(), []) || [];
   const liveProjects = useLiveQuery(() => db.projects.toArray(), []) || [];
+  // Employee attendance requests waiting on a manager (shown as a badge on Attendance)
+  const pendingAttendanceCount =
+    useLiveQuery(async () => (await db.attendance.toArray()).reduce((n, r) => n + pendingRequests(r).length, 0), []) || 0;
   const liveInvoices = useLiveQuery(() => db.invoices.toArray(), []) || [];
   const liveQuotations = useLiveQuery(() => db.quotations.toArray(), []) || [];
   const livePayments = useLiveQuery(() => db.payments.toArray(), []) || [];
@@ -174,6 +179,10 @@ export default function Layout({ current, onNav, children }: Props) {
             if (item.key === 'my-workspace' && (isSelfService || !myEmployee)) {
               return null;
             }
+            // Own check-in / attendance page for anyone linked to an employee record
+            if (item.key === 'my-attendance' && !myEmployee) {
+              return null;
+            }
             const label = item.key === 'dashboard' && isSelfService ? 'My Dashboard' : item.label;
             return (
               <div
@@ -183,6 +192,14 @@ export default function Layout({ current, onNav, children }: Props) {
               >
                 <span style={{ fontSize: 14, width: 16, textAlign: 'center' }}>{item.icon}</span>
                 {label}
+                {item.key === 'attendance' && !isSelfService && pendingAttendanceCount > 0 && (
+                  <span
+                    title={`${pendingAttendanceCount} attendance request(s) waiting for approval`}
+                    style={{ marginLeft: 'auto', background: '#F79009', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 7px' }}
+                  >
+                    {pendingAttendanceCount}
+                  </span>
+                )}
               </div>
             );
           })}

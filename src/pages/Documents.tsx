@@ -30,6 +30,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { db, type DocumentRecord, type DocumentType, type DocumentCategory, type DocumentRelatedTo, type DocumentStatus } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -87,7 +88,7 @@ export default function Documents() {
   const { showToast } = useToast();
 
   // Reactive Dexie Live Queries
-  const liveDocuments = useLiveQuery(() => db.documents.toArray(), []) || [];
+  const liveDocuments = useLiveQuery(async () => newestFirst(await db.documents.toArray(), (d) => d.issueDate), []) || [];
   const liveClients = useLiveQuery(() => db.clients.toArray(), []) || [];
   const liveProjects = useLiveQuery(() => db.projects.toArray(), []) || [];
   const liveEmployees = useLiveQuery(() => db.employees.toArray(), []) || [];

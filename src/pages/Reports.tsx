@@ -819,7 +819,7 @@ export default function Reports() {
                       <th>EMPLOYEE ID</th>
                       <th>NAME</th>
                       <th>ROLE</th>
-                      <th>DEPARTMENT</th>
+                      <th>DESIGNATION</th>
                       <th style={{ textAlign: 'right' }}>MONTHLY SALARY</th>
                       <th>STATUS</th>
                     </tr>
@@ -830,7 +830,7 @@ export default function Reports() {
                         <td style={{ fontWeight: 600 }}>{e.id}</td>
                         <td style={{ fontWeight: 600 }}>{e.name}</td>
                         <td style={{ fontSize: 12.5, color: '#697586' }}>{e.role}</td>
-                        <td>{e.dept}</td>
+                        <td>{e.role}</td>
                         <td style={{ textAlign: 'right', fontWeight: 700, color: '#3B5BDB' }}>{formatINR(e.salary)}</td>
                         <td><span className="badge badge-green">{e.status}</span></td>
                       </tr>

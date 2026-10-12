@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Client } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { updateClient, deleteClient, archiveClient } from '../services/clientService';
 import { validateClientForm, type ClientValidationErrors } from '../utils/validation';
 import { useAuth } from '../context/AuthContext';
@@ -37,7 +38,7 @@ export default function ClientProfile({ clientId, onBack, onViewProject }: Props
 
   // Fetch projects live from DB for this client
   const clientProjects = useLiveQuery(
-    () => (client ? db.projects.where('clientId').equals(client.id!).toArray() : []),
+    async () => (client ? newestFirst(await db.projects.where('clientId').equals(client.id!).toArray(), (p) => p.startDate) : []),
     [client]
   ) || [];
 

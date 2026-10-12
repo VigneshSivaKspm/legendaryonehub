@@ -12,7 +12,7 @@ import {
 import { dbFirestore } from '../config/firebase';
 import { db, safeOpenDatabase, type PayrollRecord } from '../db/database';
 import { adjustmentsFor, sumAdjustments } from './payrollAdjustmentService';
-import { STANDARD_DAY_HOURS } from '../utils/attendanceTimes';
+import { computeMonthPay, type MonthPay } from '../utils/salary';
 import { notifyPayrollPaid } from './emailNotificationService';
 
 const PAYROLL_COL = 'payroll';
@@ -130,7 +130,35 @@ export async function savePayrollRecord(
  * Safely integrates attendance & leave without overwriting external data.
  * Updates existing payroll if already generated for employee + month.
  */
-export async function generateMonthlyPayroll(monthStr: string): Promise<number> {
+/** Salary-rule fields shared by generated payroll records (see utils/salary.ts). */
+export function payFieldsFrom(pay: MonthPay) {
+  return {
+    workingDays: pay.workingDays,
+    hasAttendanceData: pay.hasAttendanceData,
+    presentDays: pay.presentDays + pay.halfDays * 0.5,
+    paidLeaveDays: pay.paidLeaveDays,
+    unpaidLeaveDays: pay.unpaidLeaveDays,
+    absentDays: pay.absentDays,
+    unpaidLeaveDeduction: pay.unpaidLeaveDeduction,
+    absentDeduction: pay.absentDeduction,
+    shortMinutes: pay.shortMinutes,
+    lateMinutes: pay.lateMinutes,
+    earlyLeaveMinutes: pay.earlyLeaveMinutes,
+    extraLunchMinutes: pay.extraLunchMinutes,
+    shortTimeDeduction: pay.shortTimeDeduction,
+    dailyRate: Math.round(pay.rates.daily * 100) / 100,
+    hourlyRate: Math.round(pay.rates.hourly * 100) / 100,
+    perMinuteRate: Math.round(pay.rates.perMinute * 10000) / 10000,
+    workedMinutes: pay.workedMinutes,
+  };
+}
+
+/**
+ * Builds (or rebuilds) the month's payroll for every active employee.
+ * Fixed salary minus absent days, unpaid leave and short time (late / early / long lunch, per minute),
+ * split over the company's working days. Overtime, bonus and incentives are only what an admin entered.
+ */
+export async function generateMonthlyPayroll(monthStr: string, workingWeekdays?: string[]): Promise<number> {
   await safeOpenDatabase();
 
   const activeEmployees = await db.employees.where('status').notEqual('Inactive').toArray();
@@ -138,10 +166,7 @@ export async function generateMonthlyPayroll(monthStr: string): Promise<number> 
     return 0;
   }
 
-  const workingDays = getDaysInMonth(monthStr);
   const existingPayrolls = await db.payroll.where('month').equals(monthStr).toArray();
-
-  // Read attendance & leave for integration
   const attendanceRecords = await db.attendance.toArray();
   const leaveRecords = await db.leaveRequests.toArray();
   const adjustments = await db.payrollAdjustments.toArray();
@@ -152,51 +177,14 @@ export async function generateMonthlyPayroll(monthStr: string): Promise<number> 
     if (!emp.id) continue;
     const empBaseSalary = Number(emp.salary) || 0;
 
-    // Filter attendance for employee & month
-    const empAttendance = attendanceRecords.filter(
-      (a) => String(a.employeeId) === String(emp.id) && a.date.startsWith(monthStr)
-    );
-
-    // Filter approved leave for employee & month
-    const empLeave = leaveRecords.filter(
-      (l) =>
-        String(l.employeeId) === String(emp.id) &&
-        l.status === 'Approved' &&
-        (l.fromDate.startsWith(monthStr) || l.toDate.startsWith(monthStr))
-    );
-
-    const hasAttendanceData = empAttendance.length > 0;
-    let presentDays = 0;
-    let paidLeaveDays = 0;
-    let unpaidLeaveDays = 0;
-
-    if (hasAttendanceData) {
-      empAttendance.forEach((a) => {
-        if (a.status === 'Present') presentDays++;
-        else if (a.status === 'Half Day') presentDays += 0.5;
-        else if (a.status === 'On Leave') paidLeaveDays++;
-      });
-    }
-
-    empLeave.forEach((l) => {
-      if (l.leaveType === 'Unpaid Leave') {
-        unpaidLeaveDays += Number(l.days) || 0;
-      } else {
-        if (!hasAttendanceData) {
-          paidLeaveDays += Number(l.days) || 0;
-        }
-      }
+    const pay = computeMonthPay({
+      month: monthStr,
+      salary: empBaseSalary,
+      workingWeekdays,
+      attendance: attendanceRecords.filter((a) => String(a.employeeId) === String(emp.id)),
+      leaves: leaveRecords.filter((l) => String(l.employeeId) === String(emp.id)),
     });
 
-    const absentDays = hasAttendanceData
-      ? Math.max(0, workingDays - (presentDays + paidLeaveDays + unpaidLeaveDays))
-      : 0;
-
-    // Daily rate calculation for unpaid leave deduction
-    const dailyRate = workingDays > 0 ? empBaseSalary / workingDays : 0;
-    const unpaidLeaveDeduction = Math.round(dailyRate * unpaidLeaveDays);
-
-    // Find existing payroll record for employee + month
     const existing = existingPayrolls.find(
       (p) => String(p.employeeId) === String(emp.id) && p.month === monthStr
     );
@@ -209,15 +197,13 @@ export async function generateMonthlyPayroll(monthStr: string): Promise<number> 
     const hasDeductionEntries = empAdjustments.some((a) => a.type === 'Deduction');
     const allowances = hasAllowanceEntries ? adjTotals.allowances : existing ? Number(existing.allowances) || 0 : 0;
     const otherDeductions = hasDeductionEntries ? adjTotals.deductions : existing ? Number(existing.otherDeductions) || 0 : 0;
+    // Manual only: 0 unless an admin entered an amount
     const bonus = existing ? Number(existing.bonus) || 0 : 0;
+    const overtime = existing ? Number(existing.overtime) || 0 : 0;
 
-    // Overtime pay from attendance overtime hours at the employee's hourly rate
-    const overtimeHours = empAttendance.reduce((s, a) => s + (Number(a.overtimeHours) || 0), 0);
-    const hourlyRate = workingDays > 0 ? empBaseSalary / (workingDays * STANDARD_DAY_HOURS) : 0;
-    const overtime =
-      overtimeHours > 0 ? Math.round(overtimeHours * hourlyRate) : existing ? Number(existing.overtime) || 0 : 0;
-
-    const totalDeductions = Math.round(unpaidLeaveDeduction + otherDeductions);
+    const totalDeductions = Math.round(
+      pay.absentDeduction + pay.unpaidLeaveDeduction + pay.shortTimeDeduction + otherDeductions
+    );
     const grossSalary = Math.round(empBaseSalary + allowances + bonus + overtime);
     const netSalary = Math.max(0, Math.round(grossSalary - totalDeductions));
 
@@ -228,20 +214,14 @@ export async function generateMonthlyPayroll(monthStr: string): Promise<number> 
       employeeId: emp.id,
       employeeName: emp.name,
       employeeCode: emp.employeeId || '',
-      department: emp.dept || 'General',
+      department: emp.dept || '',
       role: emp.role || 'Staff',
       month: monthStr,
       baseSalary: empBaseSalary,
-      workingDays,
-      hasAttendanceData,
-      presentDays,
-      paidLeaveDays,
-      unpaidLeaveDays,
-      absentDays,
+      ...payFieldsFrom(pay),
       allowances,
       bonus,
       overtime,
-      unpaidLeaveDeduction,
       otherDeductions,
       totalDeductions,
       grossSalary,

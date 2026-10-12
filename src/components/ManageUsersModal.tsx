@@ -17,6 +17,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { db, type User, type Employee } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import DeleteConfirmationModal from './DeleteConfirmationModal';
@@ -46,7 +47,7 @@ export default function ManageUsersModal({ isOpen, onClose }: ManageUsersModalPr
   const { showToast } = useToast();
 
   // Reactive Dexie Queries
-  const liveUsers = useLiveQuery(() => db.users.toArray(), []) || [];
+  const liveUsers = useLiveQuery(async () => newestFirst(await db.users.toArray()), []) || [];
   const liveEmployees = useLiveQuery(() => db.employees.toArray(), []) || [];
 
   // Local Search State
@@ -541,7 +542,7 @@ export default function ManageUsersModal({ isOpen, onClose }: ManageUsersModalPr
                     <option value="">-- No Employee Link --</option>
                     {liveEmployees.map((emp) => (
                       <option key={emp.id} value={emp.id}>
-                        {emp.name} - {emp.role} ({emp.dept})
+                        {emp.name} - {emp.role}
                       </option>
                     ))}
                   </select>
@@ -623,7 +624,7 @@ export default function ManageUsersModal({ isOpen, onClose }: ManageUsersModalPr
                     <option value="">-- No Employee Link --</option>
                     {liveEmployees.map((emp) => (
                       <option key={emp.id} value={emp.id}>
-                        {emp.name} - {emp.role} ({emp.dept})
+                        {emp.name} - {emp.role}
                       </option>
                     ))}
                   </select>

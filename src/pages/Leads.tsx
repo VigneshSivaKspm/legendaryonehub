@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Lead } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   addLead,
   updateLead,
@@ -182,7 +183,7 @@ export default function Leads() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Fetch live leads from Dexie cache (synchronized in real time with Firestore)
-  const leads = useLiveQuery(() => db.leads.toArray(), []) || [];
+  const leads = useLiveQuery(async () => newestFirst(await db.leads.toArray()), []) || [];
 
   // Optimistic stage tracking for drag-and-drop and stage updates
   const [optimisticStages, setOptimisticStages] = useState<Record<string | number, Lead['stage']>>({});

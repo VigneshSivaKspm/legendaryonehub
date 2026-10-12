@@ -49,6 +49,27 @@ export function formatLunch(rec: Pick<AttendanceRecord, 'lunchOut' | 'lunchIn'>)
   return `${formatTime12h(rec.lunchOut)} – ${formatTime12h(rec.lunchIn)} (${lunchMinutes(rec)}m)`;
 }
 
+/**
+ * Minutes actually worked: check-in to check-out (or `now` while still in), minus lunch.
+ * While on lunch the clock stops at lunch-out. Null when there's no check-in.
+ */
+export function workedMinutes(rec: AttendanceRecord, now?: string): number | null {
+  if (!rec.checkIn) return null;
+  const end = rec.checkOut || now;
+  if (!end) return null;
+  let lunch = 0;
+  if (rec.lunchOut) lunch = rec.lunchIn ? minutesOf(rec.lunchIn) - minutesOf(rec.lunchOut) : minutesOf(end) - minutesOf(rec.lunchOut);
+  return Math.max(0, minutesOf(end) - minutesOf(rec.checkIn) - Math.max(0, lunch));
+}
+
+/** 495 → "8h 15m" */
+export function formatDuration(mins: number | null | undefined): string {
+  if (mins == null) return '—';
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+
 /** "HH:mm" plus some minutes, e.g. the latest time to be back from lunch. */
 export function addMinutes(hhmm: string, mins: number): string {
   const total = (minutesOf(hhmm) + mins) % (24 * 60);
@@ -77,12 +98,16 @@ export function checkOutBlockers(rec: AttendanceRecord, now: string, tasksDueTod
   const reasons: string[] = [];
   if (minutesOf(now) < minutesOf(WORK_END)) reasons.push(`Checking out before ${formatTime12h(WORK_END)}`);
   if (rec.checkInRequest) reasons.push(`Checked in after ${formatTime12h(WORK_START)} (${formatTime12h(rec.checkIn)})`);
-  const open = tasksDueToday.filter((t) => !isTaskDone(t));
-  if (open.length > 0) {
-    const names = open.map((t) => t.title || t.task || 'Untitled task').slice(0, 3).join(', ');
-    reasons.push(`${open.length} task${open.length > 1 ? 's' : ''} due today not completed: ${names}${open.length > 3 ? '…' : ''}`);
+  for (const t of tasksDueToday.filter((t) => !isTaskDone(t))) {
+    const why = t.delayReason ? ` · "${t.delayReason}"` : '';
+    reasons.push(`Task not completed: ${t.title || t.task || 'Untitled task'} (${t.progress || 0}% done)${why}`);
   }
   return reasons;
+}
+
+/** Tasks assigned for a given day are the ones due that day. */
+export function isDueOn(t: ProjectTask, date: string): boolean {
+  return String(t.dueDate || t.deadline || '').slice(0, 10) === date;
 }
 
 /** Absent and On Leave days have no check-in / check-out time. */
@@ -90,10 +115,10 @@ export function statusHasTimes(status: Status): boolean {
   return status !== 'Absent' && status !== 'On Leave';
 }
 
-export function defaultTimesFor(status: Status): { checkIn: string; checkOut: string } {
-  if (!statusHasTimes(status)) return { checkIn: '', checkOut: '' };
-  if (status === 'Half Day') return { checkIn: HALF_DAY_START, checkOut: WORK_END };
-  return { checkIn: WORK_START, checkOut: WORK_END };
+/** Check-out isn't pre-filled: it is recorded when the employee signs off. */
+export function defaultCheckInFor(status: Status): string {
+  if (!statusHasTimes(status)) return '';
+  return status === 'Half Day' ? HALF_DAY_START : WORK_START;
 }
 
 /** Converts "HH:mm" to "h:mm AM/PM" for display; leaves anything else untouched. */

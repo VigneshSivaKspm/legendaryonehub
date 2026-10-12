@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Client } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addClient, updateClient, deleteClient, archiveClient } from '../services/clientService';
 import { validateClientForm, type ClientValidationErrors } from '../utils/validation';
 import { useAuth } from '../context/AuthContext';
@@ -54,7 +55,7 @@ export default function Clients({ onViewClient }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Fetch live clients & services from Dexie database
-  const clients = useLiveQuery(() => db.clients.toArray(), []) || [];
+  const clients = useLiveQuery(async () => newestFirst(await db.clients.toArray(), (c) => c.joinDate), []) || [];
   const dbServices = useLiveQuery(() => db.services.toArray(), []) || [];
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];
   const payments = useLiveQuery(() => db.payments.toArray(), []) || [];

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Quotation, type QuotationItem } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addQuotation, updateQuotation, deleteQuotation } from '../services/quotationService';
 import { useToast } from '../context/ToastContext';
 import { Trash2 } from 'lucide-react';
@@ -59,7 +60,7 @@ export default function Quotations() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Live queries from Dexie cache (synchronized real-time with Firestore)
-  const quotations = useLiveQuery(() => db.quotations.toArray(), []) || [];
+  const quotations = useLiveQuery(async () => newestFirst(await db.quotations.toArray(), (q) => q.date), []) || [];
   const dbClients = useLiveQuery(() => db.clients.toArray(), []) || [];
 
   // Summary card metric calculations derived exclusively from real quotation records

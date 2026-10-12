@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, EMPLOYEE_ACCESS_ROLES, type Employee, type EmployeeAccessRole } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addEmployee, updateEmployee, deleteEmployee } from '../services/employeeService';
 import { createEmployeeLogin, syncEmployeeAccessRole } from '../services/employeeAccountService';
 import { sendFirebasePasswordReset } from '../services/authService';
@@ -14,7 +15,6 @@ interface EmployeeFormData {
   phone: string;
   joiningDate: string;
   role: string;
-  dept: string;
   salary: string | number;
   employeeId: string;
   status: 'Active' | 'On Leave' | 'Inactive';
@@ -29,7 +29,6 @@ const initialFormState: EmployeeFormData = {
   phone: '',
   joiningDate: new Date().toISOString().split('T')[0],
   role: '',
-  dept: 'Development',
   salary: '',
   employeeId: '',
   status: 'Active',
@@ -49,7 +48,6 @@ export default function Employees() {
   const { showToast } = useToast();
 
   const [search, setSearch] = useState('');
-  const [dept, setDept] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [showAdd, setShowAdd] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -62,7 +60,7 @@ export default function Employees() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Live query from Dexie cache (synchronized real-time with Firestore)
-  const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
+  const employees = useLiveQuery(async () => newestFirst(await db.employees.toArray(), (e) => e.joiningDate), []) || [];
 
   // Derived Summary Metrics from real employee records
   const totalEmployees = employees.length;
@@ -98,12 +96,11 @@ export default function Employees() {
         email.includes(q) ||
         empId.includes(q);
 
-      const matchesDept = dept === 'All' || e.dept === dept;
       const matchesStatus = statusFilter === 'All' || e.status === statusFilter;
 
-      return matchesSearch && matchesDept && matchesStatus;
+      return matchesSearch && matchesStatus;
     });
-  }, [employees, search, dept, statusFilter]);
+  }, [employees, search, statusFilter]);
 
   const handleFieldChange = (field: keyof EmployeeFormData, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -114,7 +111,12 @@ export default function Employees() {
 
   const handleOpenAddModal = () => {
     setEditingEmployee(null);
-    const nextEmpNum = `EMP-${String(employees.length + 1).padStart(3, '0')}`;
+    // Next "LO-NNN" after the highest one in use, so a deleted employee's number isn't handed out twice
+    const highest = employees.reduce((max, e) => {
+      const m = /^LO-(\d+)$/i.exec(String(e.employeeId || '').trim());
+      return m ? Math.max(max, Number(m[1])) : max;
+    }, 0);
+    const nextEmpNum = `LO-${String(highest + 1).padStart(3, '0')}`;
     setFormData({
       ...initialFormState,
       employeeId: nextEmpNum,
@@ -131,7 +133,6 @@ export default function Employees() {
       phone: emp.phone || '',
       joiningDate: emp.joiningDate || new Date().toISOString().split('T')[0],
       role: emp.role || '',
-      dept: emp.dept || 'Development',
       salary: emp.salary ?? '',
       employeeId: String(emp.employeeId || emp.id || ''),
       status: emp.status || 'Active',
@@ -210,7 +211,6 @@ export default function Employees() {
         phone: formData.phone.trim(),
         joiningDate: formData.joiningDate.trim(),
         role: formData.role.trim(),
-        dept: formData.dept,
         salary: salaryNum,
         status: formData.status,
         accessRole: formData.accessRole,
@@ -281,7 +281,7 @@ export default function Employees() {
       return;
     }
 
-    const headers = ['Employee ID', 'Name', 'Email', 'Role', 'Department', 'Phone', 'Joining Date', 'Salary (₹)', 'Status'];
+    const headers = ['Employee ID', 'Name', 'Email', 'Job Title / Designation', 'Phone', 'Joining Date', 'Salary (₹)', 'Status'];
     const csvRows = [
       headers.join(','),
       ...filtered.map((e) =>
@@ -290,7 +290,6 @@ export default function Employees() {
           `"${e.name || ''}"`,
           `"${e.email || ''}"`,
           `"${e.role || ''}"`,
-          `"${e.dept || ''}"`,
           `"${e.phone || ''}"`,
           `"${e.joiningDate || ''}"`,
           `"${e.salary || 0}"`,
@@ -359,14 +358,6 @@ export default function Employees() {
             />
           </div>
 
-          <select className="select-base" value={dept} onChange={(e) => setDept(e.target.value)} style={{ fontSize: 13 }}>
-            <option value="All">All Departments</option>
-            <option value="Management">Management</option>
-            <option value="Development">Development</option>
-            <option value="Design">Design</option>
-            <option value="Marketing">Marketing</option>
-          </select>
-
           <select className="select-base" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ fontSize: 13 }}>
             <option value="All">All Status</option>
             <option value="Active">Active</option>
@@ -380,9 +371,8 @@ export default function Employees() {
             <tr>
               <th>EMPLOYEE</th>
               <th>EMPLOYEE ID</th>
-              <th>ROLE</th>
+              <th>JOB TITLE / DESIGNATION</th>
               <th>ACCESS</th>
-              <th>DEPARTMENT</th>
               <th>PHONE</th>
               <th>JOINING DATE</th>
               <th style={{ textAlign: 'right' }}>SALARY</th>
@@ -449,9 +439,6 @@ export default function Employees() {
                       {e.userId && (
                         <div style={{ fontSize: 10.5, color: '#12B76A', marginTop: 3, fontWeight: 600 }}>● Login enabled</div>
                       )}
-                    </td>
-                    <td>
-                      <span className="badge badge-blue">{e.dept}</span>
                     </td>
                     <td style={{ fontSize: 13, color: '#697586' }}>{e.phone}</td>
                     <td style={{ fontSize: 13, color: '#697586' }}>{e.joiningDate || '—'}</td>
@@ -586,24 +573,6 @@ export default function Employees() {
                   {errors.role && <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4 }}>{errors.role}</div>}
                 </div>
 
-                {/* Department */}
-                <div>
-                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                    Department
-                  </label>
-                  <select
-                    className="select-base"
-                    style={{ width: '100%' }}
-                    value={formData.dept}
-                    onChange={(e) => handleFieldChange('dept', e.target.value)}
-                  >
-                    <option value="Development">Development</option>
-                    <option value="Design">Design</option>
-                    <option value="Marketing">Marketing</option>
-                    <option value="Management">Management</option>
-                  </select>
-                </div>
-
                 {/* Monthly Salary */}
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
@@ -635,7 +604,7 @@ export default function Employees() {
                       backgroundColor: editingEmployee ? '#F8FAFC' : undefined,
                       cursor: editingEmployee ? 'not-allowed' : undefined,
                     }}
-                    placeholder="e.g. EMP-001"
+                    placeholder="e.g. LO-001"
                     value={formData.employeeId}
                     onChange={(e) => handleFieldChange('employeeId', e.target.value)}
                   />

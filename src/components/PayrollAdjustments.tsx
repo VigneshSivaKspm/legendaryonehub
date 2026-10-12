@@ -11,7 +11,7 @@ import {
 import { useToast } from '../context/ToastContext';
 import DeleteConfirmationModal from './DeleteConfirmationModal';
 
-const ALLOWANCE_COMPONENTS = ['HRA', 'Travel Allowance', 'Food Allowance', 'Medical Allowance', 'Internet / Phone', 'Special Allowance', 'Incentive', 'Other'];
+const ALLOWANCE_COMPONENTS = ['Incentive', 'Performance Bonus', 'Overtime', 'Festival Bonus', 'HRA', 'Travel Allowance', 'Food Allowance', 'Medical Allowance', 'Internet / Phone', 'Special Allowance', 'Other'];
 const DEDUCTION_COMPONENTS = ['Provident Fund (PF)', 'ESI', 'Professional Tax', 'TDS', 'Salary Advance', 'Loan Repayment', 'Late Penalty', 'Other'];
 
 const formatINR = (n: number) => '₹' + (Math.round(n) || 0).toLocaleString('en-IN');

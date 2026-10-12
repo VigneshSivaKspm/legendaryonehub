@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Employee, type PayrollRecord } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   getAllPayroll,
   generateMonthlyPayroll,
@@ -10,6 +11,8 @@ import {
   getDaysInMonth,
 } from '../services/payrollService';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import SalaryProgress from '../components/SalaryProgress';
 import {
   DollarSign,
   Calendar,
@@ -48,17 +51,17 @@ export function formatCurrency(amount: number): string {
 }
 
 export default function Payroll() {
+  const { companyProfile } = useAuth();
   const { showToast } = useToast();
 
   const currentMonthStr = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   // Selected Month & Filters
-  const [activeTab, setActiveTab] = useState<'register' | 'adjustments'>('register');
+  const [activeTab, setActiveTab] = useState<'register' | 'salary' | 'adjustments'>('register');
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
   const [search, setSearch] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('All');
-  const [deptFilter, setDeptFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
 
   // Modals
@@ -82,6 +85,7 @@ export default function Payroll() {
     presentDays: string | number;
     paidLeaveDays: string | number;
     unpaidLeaveDays: string | number;
+    absentDays: string | number;
     allowances: string | number;
     bonus: string | number;
     overtime: string | number;
@@ -97,6 +101,7 @@ export default function Payroll() {
     presentDays: 30,
     paidLeaveDays: 0,
     unpaidLeaveDays: 0,
+    absentDays: 0,
     allowances: 0,
     bonus: 0,
     overtime: 0,
@@ -130,7 +135,7 @@ export default function Payroll() {
 
   // Live queries from Dexie cache
   const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
-  const payrollRecords = useLiveQuery(() => db.payroll.toArray(), []) || [];
+  const payrollRecords = useLiveQuery(async () => newestFirst(await db.payroll.toArray(), (p) => p.month), []) || [];
   const allAdjustments = useLiveQuery(() => db.payrollAdjustments.toArray(), []) || [];
 
   // Allowance / deduction entries that apply to the record being edited
@@ -140,15 +145,6 @@ export default function Payroll() {
 
   const activeEmployees = useMemo(() => {
     return employees.filter((e) => e.status !== 'Inactive');
-  }, [employees]);
-
-  // Unique departments for filter dropdown
-  const departments = useMemo(() => {
-    const set = new Set<string>();
-    employees.forEach((e) => {
-      if (e.dept) set.add(e.dept);
-    });
-    return Array.from(set).sort();
   }, [employees]);
 
   // Monthly Payroll Records (unfiltered by employee/dept/status search)
@@ -202,9 +198,6 @@ export default function Payroll() {
         if (employeeFilter !== 'All' && String(p.employeeId) !== String(employeeFilter)) {
           return false;
         }
-        if (deptFilter !== 'All' && p.department !== deptFilter) {
-          return false;
-        }
         if (statusFilter !== 'All' && p.status !== statusFilter) {
           return false;
         }
@@ -212,17 +205,15 @@ export default function Payroll() {
           const q = search.toLowerCase();
           const nameMatch = (p.employeeName || '').toLowerCase().includes(q);
           const codeMatch = (p.employeeCode || '').toLowerCase().includes(q);
-          const deptMatch = (p.department || '').toLowerCase().includes(q);
           const refMatch = (p.paymentReference || '').toLowerCase().includes(q);
           const notesMatch = (p.notes || '').toLowerCase().includes(q);
-          if (!nameMatch && !codeMatch && !deptMatch && !refMatch && !notesMatch) {
+          if (!nameMatch && !codeMatch && !refMatch && !notesMatch) {
             return false;
           }
         }
         return true;
-      })
-      .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
-  }, [monthPayrollRecords, employeeFilter, deptFilter, statusFilter, search]);
+      });
+  }, [monthPayrollRecords, employeeFilter, statusFilter, search]);
 
   // Calculated Real-time Edit Modal Totals
   const computedEditTotals = useMemo(() => {
@@ -232,16 +223,22 @@ export default function Payroll() {
     const ot = Number(editForm.overtime) || 0;
     const workDays = Number(editForm.workingDays) || 30;
     const unpaidDays = Number(editForm.unpaidLeaveDays) || 0;
+    const absentDays = Number(editForm.absentDays) || 0;
     const otherDed = Number(editForm.otherDeductions) || 0;
+    // Short time (late / early / long lunch) comes from attendance and isn't edited here
+    const shortTimeDeduction = Number(activePayroll?.shortTimeDeduction) || 0;
 
     const dailyRate = workDays > 0 ? base / workDays : 0;
     const unpaidDeduction = Math.round(dailyRate * unpaidDays);
+    const absentDeduction = Math.round(dailyRate * absentDays);
     const gross = Math.round(base + allow + bon + ot);
-    const totalDed = Math.round(unpaidDeduction + otherDed);
+    const totalDed = Math.round(unpaidDeduction + absentDeduction + shortTimeDeduction + otherDed);
     const net = Math.max(0, Math.round(gross - totalDed));
 
     return {
       unpaidDeduction,
+      absentDeduction,
+      shortTimeDeduction,
       gross,
       totalDed,
       net,
@@ -253,7 +250,9 @@ export default function Payroll() {
     editForm.overtime,
     editForm.workingDays,
     editForm.unpaidLeaveDays,
+    editForm.absentDays,
     editForm.otherDeductions,
+    activePayroll,
   ]);
 
   // HANDLERS
@@ -265,7 +264,7 @@ export default function Payroll() {
 
     setIsGenerating(true);
     try {
-      const count = await generateMonthlyPayroll(selectedMonth);
+      const count = await generateMonthlyPayroll(selectedMonth, companyProfile?.workingDays);
       showToast(
         `Payroll generated successfully for ${count} employee${count === 1 ? '' : 's'} for ${selectedMonth}.`,
         'success'
@@ -287,6 +286,7 @@ export default function Payroll() {
       presentDays: rec.presentDays || 0,
       paidLeaveDays: rec.paidLeaveDays || 0,
       unpaidLeaveDays: rec.unpaidLeaveDays || 0,
+      absentDays: rec.absentDays || 0,
       allowances: rec.allowances || 0,
       bonus: rec.bonus || 0,
       overtime: rec.overtime || 0,
@@ -314,6 +314,8 @@ export default function Payroll() {
         presentDays: Number(editForm.presentDays) || 0,
         paidLeaveDays: Number(editForm.paidLeaveDays) || 0,
         unpaidLeaveDays: Number(editForm.unpaidLeaveDays) || 0,
+        absentDays: Number(editForm.absentDays) || 0,
+        absentDeduction: computedEditTotals.absentDeduction,
         allowances: Number(editForm.allowances) || 0,
         bonus: Number(editForm.bonus) || 0,
         overtime: Number(editForm.overtime) || 0,
@@ -401,7 +403,7 @@ export default function Payroll() {
     const headers = [
       'Employee Name',
       'Employee ID',
-      'Department',
+      'Designation',
       'Role',
       'Month',
       'Base Salary',
@@ -413,6 +415,9 @@ export default function Payroll() {
       'Bonus',
       'Overtime',
       'Unpaid Leave Deduction',
+      'Absent Deduction',
+      'Short Time (min)',
+      'Short Time Deduction',
       'Other Deductions',
       'Gross Salary',
       'Net Salary',
@@ -424,7 +429,7 @@ export default function Payroll() {
     const rows = filteredRecords.map((r) => [
       `"${(r.employeeName || '').replace(/"/g, '""')}"`,
       `"${r.employeeCode || ''}"`,
-      `"${r.department || ''}"`,
+      `"${r.role || ''}"`,
       `"${r.role || ''}"`,
       `"${r.month}"`,
       r.baseSalary,
@@ -436,6 +441,9 @@ export default function Payroll() {
       r.bonus,
       r.overtime,
       r.unpaidLeaveDeduction,
+      r.absentDeduction || 0,
+      r.shortMinutes || 0,
+      r.shortTimeDeduction || 0,
       r.otherDeductions,
       r.grossSalary,
       r.netSalary,
@@ -465,7 +473,7 @@ export default function Payroll() {
 ====================================================
 Employee Name  : ${p.employeeName}
 Employee ID    : ${p.employeeCode || 'N/A'}
-Department     : ${p.department || 'General'}
+Designation    : ${p.role || 'Staff'}
 Role           : ${p.role || 'Staff'}
 Payroll Month  : ${p.month}
 
@@ -474,6 +482,7 @@ Working Days   : ${p.workingDays} Days
 Present Days   : ${p.presentDays} Days
 Paid Leave     : ${p.paidLeaveDays} Days
 Unpaid Leave   : ${p.unpaidLeaveDays} Days
+Absent         : ${p.absentDays} Days
 
 EARNINGS BREAKDOWN:
 Base Salary    : ${formatCurrency(p.baseSalary)}
@@ -485,6 +494,8 @@ GROSS SALARY   : ${formatCurrency(p.grossSalary)}
 
 DEDUCTIONS BREAKDOWN:
 Unpaid Leave   : ${formatCurrency(p.unpaidLeaveDeduction)}
+Absent Days    : ${formatCurrency(p.absentDeduction || 0)}
+Short Time     : ${formatCurrency(p.shortTimeDeduction || 0)} (${p.shortMinutes || 0} min)
 Other Deductions: ${formatCurrency(p.otherDeductions)}
 ----------------------------------------------------
 TOTAL DEDUCT   : ${formatCurrency(p.totalDeductions)}
@@ -609,7 +620,8 @@ Reference      : ${p.paymentReference || 'N/A'}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #E5E9F2' }}>
         {[
           { key: 'register' as const, label: 'Payroll Register' },
-          { key: 'adjustments' as const, label: 'Allowances & Deductions' },
+          { key: 'salary' as const, label: 'Salary & Daily Progress' },
+          { key: 'adjustments' as const, label: 'Incentives, Allowances & Deductions' },
         ].map((t) => (
           <button
             key={t.key}
@@ -624,6 +636,8 @@ Reference      : ${p.paymentReference || 'N/A'}
       </div>
 
       {activeTab === 'adjustments' && <PayrollAdjustments selectedMonth={selectedMonth} />}
+
+      {activeTab === 'salary' && <SalaryProgress selectedMonth={selectedMonth} />}
 
       {activeTab === 'register' && (
       <>
@@ -934,7 +948,7 @@ Reference      : ${p.paymentReference || 'N/A'}
               <input
                 type="text"
                 className="input-field"
-                placeholder="Search employee, ID, department..."
+                placeholder="Search employee, ID..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 style={{ paddingLeft: 36, fontSize: 13, height: 38 }}
@@ -958,23 +972,6 @@ Reference      : ${p.paymentReference || 'N/A'}
               </select>
             </div>
 
-            {/* Department Filter */}
-            <div style={{ flex: '0 1 160px', minWidth: 140 }}>
-              <select
-                className="input-field"
-                value={deptFilter}
-                onChange={(e) => setDeptFilter(e.target.value)}
-                style={{ fontSize: 13, height: 38 }}
-              >
-                <option value="All">All Departments</option>
-                {departments.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Status Filter */}
             <div style={{ flex: '0 1 140px', minWidth: 120 }}>
               <select
@@ -990,14 +987,13 @@ Reference      : ${p.paymentReference || 'N/A'}
             </div>
 
             {/* Reset Filters button */}
-            {(search || employeeFilter !== 'All' || deptFilter !== 'All' || statusFilter !== 'All') && (
+            {(search || employeeFilter !== 'All' || statusFilter !== 'All') && (
               <button
                 type="button"
                 className="btn-secondary"
                 onClick={() => {
                   setSearch('');
                   setEmployeeFilter('All');
-                  setDeptFilter('All');
                   setStatusFilter('All');
                 }}
                 style={{ fontSize: 12.5, height: 38, padding: '0 12px' }}
@@ -1101,7 +1097,7 @@ Reference      : ${p.paymentReference || 'N/A'}
                     >
                       <th style={{ padding: '14px 16px' }}>Employee</th>
                       <th style={{ padding: '14px 12px' }}>EMP ID</th>
-                      <th style={{ padding: '14px 12px' }}>Dept & Role</th>
+                      <th style={{ padding: '14px 12px' }}>Designation</th>
                       <th style={{ padding: '14px 12px', textAlign: 'right' }}>Base Salary</th>
                       <th style={{ padding: '14px 12px', textAlign: 'center' }}>Days</th>
                       <th style={{ padding: '14px 12px', textAlign: 'right' }}>Allowances</th>
@@ -1158,14 +1154,9 @@ Reference      : ${p.paymentReference || 'N/A'}
                             {rec.employeeCode || '-'}
                           </td>
 
-                          {/* Dept & Role */}
-                          <td style={{ padding: '14px 12px' }}>
-                            <div style={{ fontWeight: 600, color: '#334155' }}>
-                              {rec.department || 'General'}
-                            </div>
-                            <div style={{ fontSize: 11, color: '#64748B' }}>
-                              {rec.role || 'Staff'}
-                            </div>
+                          {/* Designation */}
+                          <td style={{ padding: '14px 12px', fontWeight: 600, color: '#334155' }}>
+                            {rec.role || 'Staff'}
                           </td>
 
                           {/* Base Salary */}
@@ -1429,8 +1420,8 @@ Reference      : ${p.paymentReference || 'N/A'}
                 </div>
               </div>
 
-              {/* Present Days & Unpaid Leave Days */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+              {/* Present, Unpaid Leave & Absent Days */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 16 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
                     Present / Paid Days
@@ -1458,7 +1449,27 @@ Reference      : ${p.paymentReference || 'N/A'}
                     style={{ width: '100%' }}
                   />
                 </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
+                    Absent Days
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    className="input-field"
+                    value={editForm.absentDays}
+                    onChange={(e) => setEditForm({ ...editForm, absentDays: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+                </div>
               </div>
+              {computedEditTotals.shortTimeDeduction > 0 && (
+                <div style={{ fontSize: 11.5, color: '#697586', marginTop: -8, marginBottom: 16 }}>
+                  Includes short-time deduction of {formatCurrency(computedEditTotals.shortTimeDeduction)} ({activePayroll?.shortMinutes || 0} min late /
+                  early / long lunch) from attendance.
+                </div>
+              )}
 
               {/* Allowances, Bonus, Overtime */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
@@ -1866,9 +1877,9 @@ Reference      : ${p.paymentReference || 'N/A'}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: '#64748B', fontSize: 11 }}>DEPARTMENT</div>
+                  <div style={{ color: '#64748B', fontSize: 11 }}>DESIGNATION</div>
                   <div style={{ fontWeight: 600, color: '#334155', marginTop: 2 }}>
-                    {selectedPayslip.department || 'General'}
+                    {selectedPayslip.role || 'Staff'}
                   </div>
                 </div>
                 <div>
@@ -1979,6 +1990,18 @@ Reference      : ${p.paymentReference || 'N/A'}
                         {formatCurrency(selectedPayslip.unpaidLeaveDeduction)}
                       </span>
                     </div>
+                    {(selectedPayslip.absentDeduction || 0) > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <span style={{ color: '#475569' }}>Absent ({selectedPayslip.absentDays} d)</span>
+                        <span style={{ fontWeight: 600, color: '#DC2626' }}>{formatCurrency(selectedPayslip.absentDeduction || 0)}</span>
+                      </div>
+                    )}
+                    {(selectedPayslip.shortTimeDeduction || 0) > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <span style={{ color: '#475569' }}>Short time ({selectedPayslip.shortMinutes} min)</span>
+                        <span style={{ fontWeight: 600, color: '#DC2626' }}>{formatCurrency(selectedPayslip.shortTimeDeduction || 0)}</span>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                       <span style={{ color: '#475569' }}>Other Deductions</span>
                       <span style={{ fontWeight: 600, color: '#DC2626' }}>

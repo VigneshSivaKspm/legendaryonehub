@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Project, type ProjectTask, type ProjectMilestone, type ProjectFile } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { updateProject, addProjectMilestone, addProjectFile, addProjectActivity } from '../services/projectService';
 import { addTask } from '../services/taskService';
 import { useToast } from '../context/ToastContext';
@@ -61,9 +62,9 @@ export default function ProjectDetail({ projectId, onBack }: Props) {
 
   // Dexie live queries
   const p = useLiveQuery(() => db.projects.get(projectId), [projectId]);
-  const tasks = useLiveQuery(() => db.tasks.where('projectId').equals(projectId).toArray(), [projectId]) || [];
+  const tasks = useLiveQuery(async () => newestFirst(await db.tasks.where('projectId').equals(projectId).toArray(), (t) => t.start || t.dueDate), [projectId]) || [];
   const milestones = useLiveQuery(() => db.projectMilestones.where('projectId').equals(projectId).toArray(), [projectId]) || [];
-  const files = useLiveQuery(() => db.projectFiles.where('projectId').equals(projectId).toArray(), [projectId]) || [];
+  const files = useLiveQuery(async () => newestFirst(await db.projectFiles.where('projectId').equals(projectId).toArray()), [projectId]) || [];
   const activityLogs = useLiveQuery(() => db.projectActivity.where('projectId').equals(projectId).reverse().toArray(), [projectId]) || [];
   const allPayments = useLiveQuery(() => db.payments.toArray(), []) || [];
   const allInvoices = useLiveQuery(() => db.invoices.toArray(), []) || [];

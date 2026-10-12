@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Payment } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addPayment, deletePayment } from '../services/paymentService';
 import { useToast } from '../context/ToastContext';
 import { Trash2 } from 'lucide-react';
@@ -45,7 +46,7 @@ export default function Payments() {
   const [status, setStatus] = useState<'Confirmed' | 'Pending'>('Confirmed');
 
   // Live query from Dexie cache (synchronized real-time with Firestore)
-  const payments = useLiveQuery(() => db.payments.toArray(), []) || [];
+  const payments = useLiveQuery(async () => newestFirst(await db.payments.toArray(), (p) => p.date), []) || [];
   const clients = useLiveQuery(() => db.clients.toArray(), []) || [];
   const invoices = useLiveQuery(() => db.invoices.toArray(), []) || [];
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];

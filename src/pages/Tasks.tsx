@@ -15,6 +15,7 @@ import {
   Folder,
 } from 'lucide-react';
 import { db, type ProjectTask, type Project } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   addTask,
   updateTask,
@@ -24,10 +25,26 @@ import {
 } from '../services/taskService';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import EmployeeSelect from '../components/EmployeeSelect';
+import { useAuth } from '../context/AuthContext';
 
 export default function Tasks() {
+  // Employees only see and update their own tasks; creating, editing and deleting is for managers
+  const { isSelfService, myEmployee } = useAuth();
+  const canManage = !isSelfService;
+
   // Live queries for real-time Dexie data
-  const rawTasks = useLiveQuery(() => db.tasks.toArray(), []) || [];
+  const allTasks = useLiveQuery(async () => newestFirst(await db.tasks.toArray(), (t) => t.start || t.dueDate || t.deadline), []);
+  const rawTasks = useMemo(() => {
+    const list = allTasks || [];
+    if (canManage) return list;
+    const myId = myEmployee?.id !== undefined ? String(myEmployee.id) : '';
+    const myName = myEmployee?.name || '';
+    return list.filter(
+      (t) =>
+        (!!myId && t.assignedToId !== undefined && String(t.assignedToId) === myId) ||
+        (!!myName && (t.assignedTo === myName || t.assignee === myName))
+    );
+  }, [allTasks, canManage, myEmployee]);
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];
 
   // Filter & Search states
@@ -221,7 +238,7 @@ export default function Tasks() {
   const handleQuickStatusChange = async (task: ProjectTask, newStatus: TaskStatus) => {
     if (!task.id) return;
     try {
-      await updateTask(task.id, { status: newStatus });
+      await updateTask(task.id, newStatus === 'Completed' ? { status: newStatus, progress: 100 } : { status: newStatus });
     } catch (err) {
       console.error('Failed to update task status:', err);
       alert('Failed to update status.');
@@ -261,10 +278,11 @@ export default function Tasks() {
             Task Management
           </h1>
           <p style={{ fontSize: 13.5, color: '#697586', margin: '4px 0 0 0' }}>
-            Track, assign, and manage team deliverables across projects
+            {canManage ? 'Track, assign, and manage team deliverables across projects' : 'Tasks assigned to you. Update the status as you work.'}
           </p>
         </div>
 
+        {canManage && (
         <button
           onClick={handleOpenAdd}
           style={{
@@ -286,6 +304,7 @@ export default function Tasks() {
           <Plus size={18} />
           Add Task
         </button>
+        )}
       </div>
 
       {/* Summary KPI Cards */}
@@ -472,7 +491,7 @@ export default function Tasks() {
                   <th style={{ padding: '14px 16px' }}>Due Date</th>
                   <th style={{ padding: '14px 16px' }}>Priority</th>
                   <th style={{ padding: '14px 16px' }}>Status</th>
-                  <th style={{ padding: '14px 16px', textAlign: 'center' }}>Actions</th>
+                  {canManage && <th style={{ padding: '14px 16px', textAlign: 'center' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -601,9 +620,27 @@ export default function Tasks() {
                           <option value="In Progress">In Progress</option>
                           <option value="Completed">Completed</option>
                         </select>
+                        {/* Assignee's progress report for unfinished work */}
+                        {t.status !== 'Completed' && (t.progress !== undefined || t.delayReason) && (
+                          <div style={{ marginTop: 6, maxWidth: 220 }} title={t.delayReason ? `Reason: ${t.delayReason}` : undefined}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div style={{ flex: 1, height: 5, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
+                                <div style={{ width: `${Number(t.progress) || 0}%`, height: '100%', background: '#3B5BDB' }} />
+                              </div>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#334155' }}>{Number(t.progress) || 0}%</span>
+                            </div>
+                            {t.delayReason && (
+                              <div style={{ fontSize: 11, color: '#B45309', marginTop: 3, lineHeight: 1.35 }}>
+                                {t.delayReason}
+                                {t.progressUpdatedOn && <span style={{ color: '#94A3B8' }}> · {t.progressUpdatedOn}</span>}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </td>
 
                       {/* Actions */}
+                      {canManage && (
                       <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center' }}>
                           <button
@@ -645,6 +682,7 @@ export default function Tasks() {
                           </button>
                         </div>
                       </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -693,7 +731,7 @@ export default function Tasks() {
               >
                 Reset Filters
               </button>
-            ) : (
+            ) : canManage && (
               <button
                 onClick={handleOpenAdd}
                 style={{

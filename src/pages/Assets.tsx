@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type AssetRecord, type AssetCategory, type AssetStatus, type Employee } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   getAllAssets,
   addAsset,
@@ -246,7 +247,7 @@ export default function Assets() {
   }, []);
 
   // Live queries from Dexie DB
-  const assets = useLiveQuery(() => db.assets.toArray(), []) || [];
+  const assets = useLiveQuery(async () => newestFirst(await db.assets.toArray(), (a) => a.purchaseDate), []) || [];
   const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
 
   const activeEmployees = useMemo(() => {
@@ -312,8 +313,7 @@ export default function Assets() {
         }
 
         return true;
-      })
-      .sort((a, b) => (a.assetName || '').localeCompare(b.assetName || ''));
+      });
   }, [assets, categoryFilter, statusFilter, employeeFilter, locationFilter, search]);
 
   // Handlers
@@ -1460,7 +1460,7 @@ export default function Assets() {
                     <option value="">Select Employee...</option>
                     {activeEmployees.map((emp) => (
                       <option key={emp.id} value={String(emp.id)}>
-                        {emp.name} ({emp.dept || 'Staff'})
+                        {emp.name} ({emp.role || 'Staff'})
                       </option>
                     ))}
                   </select>
@@ -1706,7 +1706,7 @@ export default function Assets() {
                 <option value="">Select Employee...</option>
                 {activeEmployees.map((emp) => (
                   <option key={emp.id} value={String(emp.id)}>
-                    {emp.name} ({emp.dept || 'Staff'})
+                    {emp.name} ({emp.role || 'Staff'})
                   </option>
                 ))}
               </select>

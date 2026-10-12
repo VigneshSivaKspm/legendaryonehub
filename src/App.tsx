@@ -28,7 +28,8 @@ import Leave from './pages/Leave';
 import Payroll from './pages/Payroll';
 import Assets from './pages/Assets';
 import Documents from './pages/Documents';
-import MyWorkspace from './pages/MyWorkspace';
+import MyWorkspace, { type WorkspaceTab } from './pages/MyWorkspace';
+import MyAttendance from './pages/MyAttendance';
 import logo from './assets/legendary-one-logo.png';
 
 type AppScreen =
@@ -36,7 +37,7 @@ type AppScreen =
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance';
 
 function MainApp() {
   const {
@@ -51,6 +52,8 @@ function MainApp() {
   const [screen, setScreen] = useState<AppScreen>('dashboard');
   const [selectedClientId, setSelectedClientId] = useState<number | string>('');
   const [selectedProjectId, setSelectedProjectId] = useState<number | string>('');
+  // Tab to open My Workspace on; `n` remounts it so the same tab can be requested again
+  const [workspaceTab, setWorkspaceTab] = useState<{ tab: WorkspaceTab; n: number }>({ tab: 'overview', n: 0 });
 
   if (isLoading || (isAuthenticated && isCheckingCompanySetup)) {
     return (
@@ -78,7 +81,15 @@ function MainApp() {
     }
   }
 
-  const nav = (s: string) => { if (s !== 'login') setScreen(s as AppScreen); };
+  const nav = (s: string) => {
+    if (s === 'login') return;
+    setWorkspaceTab((w) => ({ tab: 'overview', n: w.n + 1 }));
+    setScreen(s as AppScreen);
+  };
+  const workspaceScreen: AppScreen = isSelfService ? 'dashboard' : 'my-workspace';
+  const workspace = (
+    <MyWorkspace key={workspaceTab.n} initialTab={workspaceTab.tab} onOpenAttendance={() => setScreen('my-attendance')} />
+  );
 
   const renderScreen = () => {
     if (!canAccessScreen(screen)) {
@@ -99,10 +110,19 @@ function MainApp() {
     }
     switch (screen) {
       case 'my-workspace':
-        return <MyWorkspace />;
+        return workspace;
+      case 'my-attendance':
+        return (
+          <MyAttendance
+            onOpenTodayTasks={() => {
+              setWorkspaceTab((w) => ({ tab: 'today', n: w.n + 1 }));
+              setScreen(workspaceScreen);
+            }}
+          />
+        );
       case 'dashboard':
         // Employees land on their personal dashboard
-        if (isSelfService) return <MyWorkspace />;
+        if (isSelfService) return workspace;
         return (
           <Dashboard
             onNav={nav}

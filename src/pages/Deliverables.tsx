@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Deliverable } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import { addDeliverable, deleteDeliverable } from '../services/deliverableService';
 import {
   validateDeliverableForm,
@@ -47,7 +48,7 @@ export default function Deliverables() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Live queries from Dexie cache (synchronized real-time with Firestore)
-  const deliverables = useLiveQuery(() => db.deliverables.toArray(), []) || [];
+  const deliverables = useLiveQuery(async () => newestFirst(await db.deliverables.toArray(), (d) => d.date), []) || [];
   const dbClients = useLiveQuery(() => db.clients.toArray(), []) || [];
   const dbEmployees = useLiveQuery(() => db.employees.toArray(), []) || [];
 

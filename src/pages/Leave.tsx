@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Employee, type LeaveRequest } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   getAllLeaveRequests,
   addLeaveRequest,
@@ -160,7 +161,6 @@ export default function Leave() {
   // Filters
   const [search, setSearch] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('All');
-  const [deptFilter, setDeptFilter] = useState('All');
   const [leaveTypeFilter, setLeaveTypeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [monthFilter, setMonthFilter] = useState('');
@@ -202,19 +202,10 @@ export default function Leave() {
 
   // Live queries from Dexie local cache
   const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
-  const leaveRequests = useLiveQuery(() => db.leaveRequests.toArray(), []) || [];
+  const leaveRequests = useLiveQuery(async () => newestFirst(await db.leaveRequests.toArray(), (l) => l.fromDate), []) || [];
 
   const activeEmployees = useMemo(() => {
     return employees.filter((e) => e.status !== 'Inactive');
-  }, [employees]);
-
-  // Unique departments for filter dropdown
-  const departments = useMemo(() => {
-    const set = new Set<string>();
-    employees.forEach((e) => {
-      if (e.dept) set.add(e.dept);
-    });
-    return Array.from(set).sort();
   }, [employees]);
 
   // Calculated Summary Cards (Real values only)
@@ -268,10 +259,6 @@ export default function Leave() {
         if (employeeFilter !== 'All' && String(r.employeeId) !== String(employeeFilter)) {
           return false;
         }
-        // Dept filter
-        if (deptFilter !== 'All' && r.department !== deptFilter) {
-          return false;
-        }
         // Leave Type filter
         if (leaveTypeFilter !== 'All' && r.leaveType !== leaveTypeFilter) {
           return false;
@@ -296,15 +283,13 @@ export default function Leave() {
           const reasonText = (r.reason || '').toLowerCase();
           const typeText = (r.leaveType || '').toLowerCase();
           const remarksText = (r.adminRemarks || '').toLowerCase();
-          const deptText = (r.department || '').toLowerCase();
 
           if (
             !empName.includes(q) &&
             !empCode.includes(q) &&
             !reasonText.includes(q) &&
             !typeText.includes(q) &&
-            !remarksText.includes(q) &&
-            !deptText.includes(q)
+            !remarksText.includes(q)
           ) {
             return false;
           }
@@ -316,7 +301,7 @@ export default function Leave() {
         const dateB = b.createdAt || b.fromDate || '';
         return dateB.localeCompare(dateA);
       });
-  }, [leaveRequests, employeeFilter, deptFilter, leaveTypeFilter, statusFilter, monthFilter, search]);
+  }, [leaveRequests, employeeFilter, leaveTypeFilter, statusFilter, monthFilter, search]);
 
   // Handlers
   const handleOpenCreateModal = () => {
@@ -833,23 +818,6 @@ export default function Leave() {
               </select>
             </div>
 
-            {/* Department Filter */}
-            <div style={{ flex: '0 1 160px', minWidth: 140 }}>
-              <select
-                className="input-field"
-                value={deptFilter}
-                onChange={(e) => setDeptFilter(e.target.value)}
-                style={{ fontSize: 13, height: 38 }}
-              >
-                <option value="All">All Departments</option>
-                {departments.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Leave Type Filter */}
             <div style={{ flex: '0 1 160px', minWidth: 140 }}>
               <select
@@ -897,7 +865,6 @@ export default function Leave() {
             {/* Reset Filters button */}
             {(search ||
               employeeFilter !== 'All' ||
-              deptFilter !== 'All' ||
               leaveTypeFilter !== 'All' ||
               statusFilter !== 'All' ||
               monthFilter) && (
@@ -907,7 +874,6 @@ export default function Leave() {
                 onClick={() => {
                   setSearch('');
                   setEmployeeFilter('All');
-                  setDeptFilter('All');
                   setLeaveTypeFilter('All');
                   setStatusFilter('All');
                   setMonthFilter('');
@@ -998,7 +964,6 @@ export default function Leave() {
                     >
                       <th style={{ padding: '14px 16px' }}>Employee</th>
                       <th style={{ padding: '14px 12px' }}>EMP ID</th>
-                      <th style={{ padding: '14px 12px' }}>Department</th>
                       <th style={{ padding: '14px 12px' }}>Leave Type</th>
                       <th style={{ padding: '14px 12px' }}>From</th>
                       <th style={{ padding: '14px 12px' }}>To</th>
@@ -1073,11 +1038,6 @@ export default function Leave() {
                           {/* EMP ID */}
                           <td style={{ padding: '14px 12px', color: '#64748B', fontWeight: 600 }}>
                             {req.employeeCode || '-'}
-                          </td>
-
-                          {/* Department */}
-                          <td style={{ padding: '14px 12px', color: '#475569', fontWeight: 500 }}>
-                            {req.department || '-'}
                           </td>
 
                           {/* Leave Type */}
@@ -1376,7 +1336,7 @@ export default function Leave() {
                   <option value="">-- Select Employee --</option>
                   {activeEmployees.map((emp) => (
                     <option key={emp.id} value={String(emp.id)}>
-                      {emp.name} ({emp.employeeId || 'No ID'}) - {emp.dept || 'No Dept'}
+                      {emp.name} ({emp.employeeId || 'No ID'}){emp.role ? ` - ${emp.role}` : ''}
                     </option>
                   ))}
                 </select>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type CompanyService } from '../db/database';
+import { newestFirst } from '../utils/sort';
 import {
   getAllServices,
   addService,
@@ -58,7 +59,7 @@ export default function Services() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Live query from Dexie DB
-  const services = useLiveQuery(() => db.services.toArray(), []) || [];
+  const services = useLiveQuery(async () => newestFirst(await db.services.toArray()), []) || [];
 
   // Filter services
   const filtered = services.filter((s) => {

@@ -97,6 +97,13 @@ export interface ProjectTask {
   estimated?: number;
   logged?: number;
   status?: 'Pending' | 'In Progress' | 'Completed' | 'To Do' | 'Review' | 'Done';
+  /** 0–100, reported by the assignee */
+  progress?: number;
+  /** Assignee's explanation for why an unfinished task is running late */
+  delayReason?: string;
+  /** Local date (YYYY-MM-DD) of the assignee's last progress update */
+  progressUpdatedOn?: string;
+  progressUpdatedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -193,7 +200,8 @@ export interface Employee {
   employeeId: string;
   name: string;
   role: string;
-  dept: string;
+  /** Legacy: no longer collected; Job Title / Designation (`role`) is used instead */
+  dept?: string;
   phone: string;
   email: string;
   joiningDate: string;
@@ -363,6 +371,19 @@ export interface PayrollRecord {
   bonus: number;
   overtime: number;
   unpaidLeaveDeduction: number;
+  /** Absent days (half days count ½) × daily rate */
+  absentDeduction?: number;
+  /** Late arrival + early leave + lunch beyond 1 hour, in minutes */
+  shortMinutes?: number;
+  lateMinutes?: number;
+  earlyLeaveMinutes?: number;
+  extraLunchMinutes?: number;
+  /** shortMinutes × per-minute rate */
+  shortTimeDeduction?: number;
+  dailyRate?: number;
+  hourlyRate?: number;
+  perMinuteRate?: number;
+  workedMinutes?: number;
   otherDeductions: number;
   totalDeductions: number;
   grossSalary: number;
