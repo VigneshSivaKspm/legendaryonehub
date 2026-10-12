@@ -52,7 +52,9 @@ async function resyncPendingPayroll(employeeId: string | number): Promise<void> 
   for (const rec of pending) {
     const { allowances, deductions } = sumAdjustments(adjustmentsFor(all, employeeId, rec.month));
     const gross = Math.round((Number(rec.baseSalary) || 0) + allowances + (Number(rec.bonus) || 0) + (Number(rec.overtime) || 0));
-    const totalDeductions = Math.round((Number(rec.unpaidLeaveDeduction) || 0) + deductions);
+    const attendanceDeductions =
+      (Number(rec.unpaidLeaveDeduction) || 0) + (Number(rec.absentDeduction) || 0) + (Number(rec.shortTimeDeduction) || 0);
+    const totalDeductions = Math.round(attendanceDeductions + deductions);
     const update: Partial<PayrollRecord> = {
       allowances,
       otherDeductions: deductions,

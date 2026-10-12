@@ -10,7 +10,7 @@ type NavScreen =
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses';
 
 interface Props {
   current: string;
@@ -40,6 +40,7 @@ const nav = [
   { key: 'timesheets', label: 'Timesheets', icon: '◴' },
   { key: 'leave', label: 'Leave', icon: '◶' },
   { key: 'payroll', label: 'Payroll', icon: '◵' },
+  { key: 'employee-expenses', label: 'Employee Expenses', icon: '₹' },
   { section: 'Business' },
   { key: 'services', label: 'Services', icon: '◇' },
   { key: 'assets', label: 'Assets', icon: '◆' },

@@ -46,6 +46,10 @@ export interface ProjectFormData {
   status: string;
   notes?: string;
   requirements?: string;
+  /** Ongoing projects bill month by month, so they have no fixed value up front */
+  ongoing?: boolean;
+  monthlyRetainer?: number;
+  itemRates?: Record<string, number>;
 }
 
 export interface ProjectValidationErrors {
@@ -147,7 +151,12 @@ export function validateProjectForm(data: Partial<ProjectFormData>): ProjectVali
     errors.manager = 'Please assign a project manager.';
   }
 
-  if (data.value === undefined || data.value === null || isNaN(Number(data.value)) || Number(data.value) <= 0) {
+  if (data.ongoing) {
+    const hasRate = Object.values(data.itemRates || {}).some((r) => Number(r) > 0);
+    if (!(Number(data.monthlyRetainer) > 0) && !hasRate) {
+      errors.value = 'Set a monthly retainer or at least one per-item rate.';
+    }
+  } else if (data.value === undefined || data.value === null || isNaN(Number(data.value)) || Number(data.value) <= 0) {
     errors.value = 'Project value must be greater than 0.';
   }
 

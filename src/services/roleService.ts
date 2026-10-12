@@ -26,6 +26,7 @@ export const MODULE_PERMISSIONS_LIST = [
   { key: 'timesheets', label: 'Timesheets', category: 'Team' },
   { key: 'leave', label: 'Leave', category: 'Team' },
   { key: 'payroll', label: 'Payroll', category: 'Team' },
+  { key: 'employee-expenses', label: 'Employee Expenses', category: 'Team' },
   { key: 'services', label: 'Services', category: 'Business' },
   { key: 'assets', label: 'Assets', category: 'Business' },
   { key: 'documents', label: 'Documents', category: 'Business' },

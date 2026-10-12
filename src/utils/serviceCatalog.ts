@@ -1,0 +1,139 @@
+import type { Deliverable, Invoice, Payment, Project } from '../db/database';
+import { paymentsForProject } from './financials';
+
+/**
+ * Sub-categories offered for a service. "multi" lets the user tick several; "single" is one choice.
+ * Media Works replaced the old "Video Editing" and "Graphic Design" services.
+ */
+export const SUB_SERVICES: Record<string, { label: string; mode: 'single' | 'multi'; options: string[] }> = {
+  'Media Works': { label: 'Media Types', mode: 'multi', options: ['Video', 'Posters', 'PDF', 'Audio'] },
+  'Digital Marketing': { label: 'Ad Platform', mode: 'single', options: ['Meta Ads', 'Google Ads', 'Both'] },
+  'Organic Marketing': { label: 'Channels', mode: 'multi', options: ['Facebook', 'Instagram', 'WhatsApp', 'Google Business Profile'] },
+};
+
+/** Services that usually run month after month; new projects of these start as "ongoing". */
+export const ONGOING_SERVICES = new Set(['Media Works', 'Digital Marketing', 'Organic Marketing', 'SEO']);
+
+/** Services added for the new catalog, created automatically if missing. */
+export const NEW_SERVICES = [
+  { name: 'Media Works', description: 'Videos, posters, PDFs and audio produced for clients.', pricingType: 'Per Unit' as const },
+  { name: 'Organic Marketing', description: 'Facebook, Instagram, WhatsApp and Google Business Profile management.', pricingType: 'Monthly Retainer' as const },
+];
+
+/** Old service → new service + sub-category. */
+export const LEGACY_SERVICE_MAP: Record<string, { serviceName: string; subServices: string[] }> = {
+  'Video Editing': { serviceName: 'Media Works', subServices: ['Video'] },
+  'Graphic Design': { serviceName: 'Media Works', subServices: ['Posters'] },
+};
+
+/** Work types that can be counted on an ongoing project. Media Works counts its chosen media types. */
+const DEFAULT_ITEM_TYPES: Record<string, string[]> = {
+  'Media Works': ['Video', 'Posters', 'PDF', 'Audio'],
+  'Organic Marketing': ['Post', 'Reel', 'Story'],
+  'Digital Marketing': ['Campaign', 'Ad Creative'],
+  SEO: ['Blog Article', 'Backlink'],
+};
+
+export function itemTypesFor(p: Pick<Project, 'serviceName' | 'subServices' | 'itemRates'>): string[] {
+  const base =
+    p.serviceName === 'Media Works' && p.subServices?.length ? p.subServices : DEFAULT_ITEM_TYPES[p.serviceName] || ['Item'];
+  return Array.from(new Set([...base, ...Object.keys(p.itemRates || {})]));
+}
+
+export function subServiceLabel(p: Pick<Project, 'subServices'>): string {
+  return (p.subServices || []).join(', ');
+}
+
+/** "YYYY-MM" from a stored date (DD/MM/YYYY as typed, or ISO from imports). */
+export function monthOf(date?: string): string {
+  const v = (date || '').trim();
+  let m = /^(\d{4})-(\d{2})/.exec(v);
+  if (m) return `${m[1]}-${m[2]}`;
+  m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v);
+  if (m) return `${m[3]}-${m[2]}`;
+  return '';
+}
+
+export function currentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function monthsFrom(start: string, end: string): string[] {
+  if (!start || start > end) return [end];
+  const out: string[] = [];
+  let [y, m] = start.split('-').map(Number);
+  const [ey, em] = end.split('-').map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
+export function monthLabel(m: string): string {
+  const [y, mo] = m.split('-').map(Number);
+  return new Date(y, (mo || 1) - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+}
+
+export interface StatementMonth {
+  month: string;
+  retainer: number;
+  items: { type: string; qty: number; amount: number }[];
+  itemsTotal: number;
+  billed: number;
+  received: number;
+  /** Running balance up to and including this month (billed − received) */
+  balance: number;
+}
+
+export interface OngoingStatement {
+  months: StatementMonth[];
+  billed: number;
+  received: number;
+  outstanding: number;
+}
+
+export function workFor(p: Project, deliverables: Deliverable[]): Deliverable[] {
+  return deliverables.filter((d) => d.projectId !== undefined && String(d.projectId) === String(p.id));
+}
+
+/**
+ * Month-by-month bill for an ongoing project: the retainer every month from the start month until it is
+ * completed / cancelled / archived, plus the work logged that month at its rate, against confirmed payments.
+ */
+export function ongoingStatement(p: Project, deliverables: Deliverable[], payments: Payment[], invoices: Invoice[], upTo = currentMonth()): OngoingStatement {
+  const work = workFor(p, deliverables);
+  const pays = paymentsForProject(p, payments, invoices).filter((pm) => pm.status === 'Confirmed');
+  const startCandidates = [monthOf(p.startDate), ...work.map((w) => w.period || monthOf(w.date)), ...pays.map((pm) => monthOf(pm.date))].filter(Boolean);
+  const start = startCandidates.sort()[0] || upTo;
+  const end = p.status === 'Completed' || p.status === 'Cancelled' || p.status === 'Archived' ? (monthOf(p.deadline) || upTo) : upTo;
+
+  let balance = 0;
+  const months = monthsFrom(start, end > upTo ? upTo : end).map((month) => {
+    const monthWork = work.filter((w) => (w.period || monthOf(w.date)) === month);
+    const byType = new Map<string, { qty: number; amount: number }>();
+    monthWork.forEach((w) => {
+      const cur = byType.get(w.type) || { qty: 0, amount: 0 };
+      cur.qty += Number(w.qty) || 0;
+      cur.amount += Number(w.amount ?? (Number(w.qty) || 0) * (Number(w.rate) || 0)) || 0;
+      byType.set(w.type, cur);
+    });
+    const items = Array.from(byType, ([type, v]) => ({ type, ...v }));
+    const itemsTotal = items.reduce((s, i) => s + i.amount, 0);
+    const retainer = Number(p.monthlyRetainer) || 0;
+    const billed = retainer + itemsTotal;
+    const received = pays.filter((pm) => monthOf(pm.date) === month).reduce((s, pm) => s + (Number(pm.amount) || 0), 0);
+    balance += billed - received;
+    return { month, retainer, items, itemsTotal, billed, received, balance };
+  });
+
+  const billed = months.reduce((s, m) => s + m.billed, 0);
+  // Payments dated outside the statement months still count towards what's been received
+  const received = pays.reduce((s, pm) => s + (Number(pm.amount) || 0), 0);
+  return { months, billed, received, outstanding: Math.max(0, billed - received) };
+}

@@ -73,6 +73,14 @@ export interface Project {
   requirements?: string;
   /** Domain name(s) for the project, comma separated */
   domain?: string;
+  /** Sub-categories of the service, e.g. Media Works → ['Video', 'Posters'] (see utils/serviceCatalog) */
+  subServices?: string[];
+  /** Never-ending work billed month by month (shown in Projects → Ongoing Works) */
+  ongoing?: boolean;
+  /** Ongoing: fixed amount billed every month */
+  monthlyRetainer?: number;
+  /** Ongoing: price per counted item, e.g. { Video: 300, Posters: 150 } */
+  itemRates?: Record<string, number>;
   createdAt?: string;
   updatedAt?: string;
   createdUserId?: string;
@@ -309,6 +317,9 @@ export interface Deliverable {
   employee: string;
   period?: string;
   status: 'Approved' | 'Pending';
+  /** Ongoing project this work was logged against */
+  projectId?: number | string;
+  projectName?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -408,6 +419,12 @@ export interface PayrollAdjustment {
   recurring: boolean; // applies to every month from `month` onwards
   endMonth?: string; // optional last month for recurring entries
   notes?: string;
+  /** Set for entries made on the Employee Expenses page (an expense recovered from salary) */
+  source?: 'employeeExpense';
+  /** Employee expense: the day it was spent (YYYY-MM-DD); `month` is the salary it's deducted from */
+  date?: string;
+  category?: string;
+  description?: string;
   createdAt?: string;
   updatedAt?: string;
 }

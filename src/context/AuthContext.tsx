@@ -42,7 +42,7 @@ interface AuthContextType {
 /** Modules that show every employee's or the company's data; plain employees use My Workspace instead. */
 const SELF_SERVICE_BLOCKED = new Set([
   'projects', 'project-detail',
-  'employees', 'attendance', 'leave', 'payroll', 'timesheets',
+  'employees', 'attendance', 'leave', 'payroll', 'employee-expenses', 'timesheets',
   'invoices', 'payments', 'expenses', 'quotations', 'reports',
   'services', 'settings', 'assets', 'leads', 'clients', 'client-profile',
 ]);
@@ -257,6 +257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       case 'payments':
       case 'expenses':
       case 'payroll':
+      case 'employee-expenses':
       case 'quotations':
         return isOwnerOrAdminRole(role) || role === 'Accountant';
       case 'employees':

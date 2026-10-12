@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Project } from '../db/database';
 import { newestFirst } from '../utils/sort';
@@ -10,6 +10,10 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import EmployeeSelect, { canManageProjects } from '../components/EmployeeSelect';
 import { clientLabel, computeProjectFinancials } from '../utils/financials';
 import { maskDateDDMMYYYY, toDisplayDate, todayDDMMYYYY } from '../utils/dateMask';
+import OngoingWorks from '../components/OngoingWorks';
+import ProjectServiceFields, { ServiceSelect } from '../components/ProjectServiceFields';
+import { migrateServiceCatalog } from '../services/serviceCatalogService';
+import { ONGOING_SERVICES, LEGACY_SERVICE_MAP } from '../utils/serviceCatalog';
 
 interface Props {
   onViewProject: (id: number | string) => void;
@@ -60,13 +64,17 @@ const initialFormState: Omit<Project, 'id'> = {
   notes: '',
   requirements: '',
   domain: '',
+  subServices: [],
+  ongoing: false,
+  monthlyRetainer: 0,
+  itemRates: {},
 };
 
 export default function Projects({ onViewProject }: Props) {
   const { showToast } = useToast();
   const { user } = useAuth();
 
-  const [pageTab, setPageTab] = useState<'projects' | 'expenses'>('projects');
+  const [pageTab, setPageTab] = useState<'projects' | 'ongoing' | 'expenses'>('projects');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [serviceFilter, setServiceFilter] = useState('All');
@@ -90,18 +98,33 @@ export default function Projects({ onViewProject }: Props) {
   const payments = useLiveQuery(() => db.payments.toArray(), []) || [];
   const invoices = useLiveQuery(() => db.invoices.toArray(), []) || [];
   const expenses = useLiveQuery(async () => newestFirst(await db.expenses.toArray(), (e) => e.date), []) || [];
+  const deliverables = useLiveQuery(() => db.deliverables.toArray(), []) || [];
+  // Never-ending work lives in its own tab; the main list is fixed-scope projects
+  const regularProjects = projects.filter((p) => !p.ongoing);
+  const ongoingProjects = projects.filter((p) => p.ongoing && p.status !== 'Archived');
+  const activeServices = services.filter((s) => s.status !== 'Archived' && !LEGACY_SERVICE_MAP[s.name]);
+
+  // Catalog update: Media Works / Organic Marketing services, old Video Editing & Graphic Design moved over
+  useEffect(() => {
+    if (services.length === 0) return;
+    migrateServiceCatalog()
+      .then((moved) => moved > 0 && showToast(`${moved} Video Editing / Graphic Design project(s) moved to Media Works.`, 'info'))
+      .catch((err) => console.warn('[Projects] Service catalog update failed:', err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [services.length]);
   const projectManagerCount = employees.filter((e) => canManageProjects(e) && e.status !== 'Inactive').length;
   const editingProjectPaymentCount = editingProject
     ? payments.filter((pm) => pm.projectId !== undefined && String(pm.projectId) === String(editingProject.id)).length
     : 0;
 
   // Filter projects dynamically
-  const filtered = projects.filter((p) => {
+  const filtered = regularProjects.filter((p) => {
     const query = search.toLowerCase();
     const matchSearch =
       p.name.toLowerCase().includes(query) ||
       p.clientName.toLowerCase().includes(query) ||
       p.serviceName.toLowerCase().includes(query) ||
+      (p.subServices || []).join(' ').toLowerCase().includes(query) ||
       p.manager.toLowerCase().includes(query);
 
     const matchStatus = statusFilter === 'All' || p.status === statusFilter;
@@ -133,12 +156,13 @@ export default function Projects({ onViewProject }: Props) {
   // Open Create Modal
   const handleOpenAdd = () => {
     const defaultClient = clients[0];
-    const defaultService = services[0];
+    const serviceName = pageTab === 'ongoing' ? 'Media Works' : activeServices[0]?.name || 'Website Development';
     setFormData({
       ...initialFormState,
       clientId: defaultClient?.id || 0,
       clientName: defaultClient?.name || '',
-      serviceName: defaultService?.name || 'Website Development',
+      serviceName,
+      ongoing: ONGOING_SERVICES.has(serviceName),
     });
     setFormErrors({});
     setShowAdd(true);
@@ -167,6 +191,10 @@ export default function Projects({ onViewProject }: Props) {
       notes: project.notes || '',
       requirements: project.requirements || '',
       domain: project.domain || '',
+      subServices: project.subServices || [],
+      ongoing: !!project.ongoing,
+      monthlyRetainer: project.monthlyRetainer || 0,
+      itemRates: project.itemRates || {},
     });
     setFormErrors({});
   };
@@ -341,7 +369,18 @@ export default function Projects({ onViewProject }: Props) {
                 color: pageTab === 'projects' ? '#fff' : '#697586',
               }}
             >
-              📋 All Projects ({projects.length})
+              📋 Projects ({regularProjects.length})
+            </button>
+            <button
+              onClick={() => setPageTab('ongoing')}
+              style={{
+                padding: '6px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, transition: 'all 0.15s',
+                background: pageTab === 'ongoing' ? '#7C3AED' : '#F1F5F9',
+                color: pageTab === 'ongoing' ? '#fff' : '#697586',
+              }}
+            >
+              🔁 Ongoing Works ({ongoingProjects.length})
             </button>
             <button
               onClick={() => setPageTab('expenses')}
@@ -375,7 +414,7 @@ export default function Projects({ onViewProject }: Props) {
               </select>
               <select className="select-base" value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)} style={{ fontSize: 13 }}>
                 <option value="All">All Services</option>
-                {services.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+                {activeServices.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
               </select>
             </div>
           )}
@@ -417,7 +456,10 @@ export default function Projects({ onViewProject }: Props) {
                         <div style={{ fontSize: 11.5, color: '#3B5BDB', fontWeight: 600, marginTop: 1 }}>
                           {p.clientName}
                         </div>
-                        <div style={{ fontSize: 11, color: '#697586', marginTop: 1 }}>{p.serviceName}</div>
+                        <div style={{ fontSize: 11, color: '#697586', marginTop: 1 }}>
+                          {p.serviceName}
+                          {p.subServices?.length ? ` · ${p.subServices.join(', ')}` : ''}
+                        </div>
                       </td>
                       <td style={{ fontSize: 13, fontWeight: 500 }}>{p.clientName}</td>
                       <td style={{ fontSize: 13 }}>{p.manager}</td>
@@ -492,9 +534,21 @@ export default function Projects({ onViewProject }: Props) {
               </table>
             </div>
             <div style={{ padding: '12px 16px', borderTop: '1px solid #F1F5F9', fontSize: 12.5, color: '#697586' }}>
-              Showing {filtered.length} of {projects.length} projects
+              Showing {filtered.length} of {regularProjects.length} projects · ongoing works are in their own tab
             </div>
           </>
+        )}
+
+        {/* ── Ongoing Works ── */}
+        {pageTab === 'ongoing' && (
+          <OngoingWorks
+            projects={ongoingProjects}
+            clients={clients}
+            deliverables={deliverables}
+            payments={payments}
+            invoices={invoices}
+            onEdit={handleOpenEdit}
+          />
         )}
 
         {/* ── Project Expenses Table ── */}
@@ -609,20 +663,11 @@ export default function Projects({ onViewProject }: Props) {
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Service Category *</label>
-                  <select
-                    className="select-base"
-                    style={{ width: '100%' }}
-                    value={formData.serviceName}
-                    onChange={(e) => setFormData({ ...formData, serviceName: e.target.value })}
-                  >
-                    {services.map((s) => (
-                      <option key={s.id} value={s.name}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  <ServiceSelect formData={formData} setFormData={setFormData} services={services} />
                   {formErrors.serviceName && <div style={{ fontSize: 11.5, color: '#EF4444', marginTop: 4 }}>{formErrors.serviceName}</div>}
                 </div>
+
+                <ProjectServiceFields formData={formData} setFormData={setFormData} error={formErrors.value} />
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Project Manager *</label>
@@ -656,6 +701,8 @@ export default function Projects({ onViewProject }: Props) {
                   </select>
                 </div>
 
+                {!formData.ongoing && (
+                <>
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Project Value (₹) *</label>
                   <input
@@ -678,6 +725,8 @@ export default function Projects({ onViewProject }: Props) {
                     onChange={(e) => handleValueChange(formData.value, Number(e.target.value))}
                   />
                 </div>
+                </>
+                )}
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Start Date</label>
@@ -693,6 +742,8 @@ export default function Projects({ onViewProject }: Props) {
                   {formErrors.startDate && <div style={{ fontSize: 11.5, color: '#EF4444', marginTop: 4 }}>{formErrors.startDate}</div>}
                 </div>
 
+                {!formData.ongoing && (
+                <>
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>End Date</label>
                   <input
@@ -715,6 +766,8 @@ export default function Projects({ onViewProject }: Props) {
                     onChange={(e) => setFormData({ ...formData, progress: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
                   />
                 </div>
+                </>
+                )}
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Estimated Expenses (₹)</label>
@@ -820,19 +873,10 @@ export default function Projects({ onViewProject }: Props) {
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Service Category *</label>
-                  <select
-                    className="select-base"
-                    style={{ width: '100%' }}
-                    value={formData.serviceName}
-                    onChange={(e) => setFormData({ ...formData, serviceName: e.target.value })}
-                  >
-                    {services.map((s) => (
-                      <option key={s.id} value={s.name}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  <ServiceSelect formData={formData} setFormData={setFormData} services={services} />
                 </div>
+
+                <ProjectServiceFields formData={formData} setFormData={setFormData} error={formErrors.value} />
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Project Manager *</label>
@@ -866,6 +910,8 @@ export default function Projects({ onViewProject }: Props) {
                   </select>
                 </div>
 
+                {!formData.ongoing && (
+                <>
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Project Value (₹) *</label>
                   <input
@@ -892,6 +938,8 @@ export default function Projects({ onViewProject }: Props) {
                     </div>
                   )}
                 </div>
+                </>
+                )}
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Start Date</label>
@@ -907,6 +955,8 @@ export default function Projects({ onViewProject }: Props) {
                   {formErrors.startDate && <div style={{ fontSize: 11.5, color: '#EF4444', marginTop: 4 }}>{formErrors.startDate}</div>}
                 </div>
 
+                {!formData.ongoing && (
+                <>
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>End Date</label>
                   <input
@@ -929,6 +979,8 @@ export default function Projects({ onViewProject }: Props) {
                     onChange={(e) => setFormData({ ...formData, progress: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
                   />
                 </div>
+                </>
+                )}
 
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>Expenses (₹)</label>

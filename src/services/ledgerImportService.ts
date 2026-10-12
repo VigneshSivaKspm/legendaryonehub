@@ -2,6 +2,10 @@ import { collection, doc, getDoc, getDocs, writeBatch, type WriteBatch } from 'f
 import { auth, dbFirestore } from '../config/firebase';
 import { db, safeOpenDatabase, type Client, type Project, type User } from '../db/database';
 import { LEDGER_CLIENTS, LEDGER_ROWS, LEDGER_SERVICES, type LedgerClient, type LedgerRow } from '../data/ledgerData';
+import { LEGACY_SERVICE_MAP } from '../utils/serviceCatalog';
+
+/** Ledger service name in today's catalog (old Graphic Design / Video Editing → Media Works). */
+const catalogService = (name: string) => LEGACY_SERVICE_MAP[name] || { serviceName: name, subServices: [] as string[] };
 import { CREDENTIALS_COL } from './credentialService';
 import { COMPANY_EXPENSES } from '../data/companyExpenses';
 
@@ -108,7 +112,7 @@ export async function planLedgerImport(): Promise<LedgerImportPlan> {
   });
 
   const newRows = LEDGER_ROWS.filter((r) => !ex.projects.has(ID.project(r)));
-  const needed = new Set(LEDGER_ROWS.map((r) => r.service));
+  const needed = new Set(LEDGER_ROWS.map((r) => catalogService(r.service).serviceName));
   return {
     clients,
     newClients: clients.filter((c) => !c.existing).length,
@@ -189,7 +193,7 @@ export async function runLedgerImport(currentUser?: User | null): Promise<Ledger
   // 1. Services: keep locally seeded defaults too, otherwise they vanish once Firestore has services
   await safeOpenDatabase();
   const localServices = await db.services.toArray();
-  const neededServices = new Set(LEDGER_ROWS.map((r) => r.service));
+  const neededServices = new Set(LEDGER_ROWS.map((r) => catalogService(r.service).serviceName));
   for (const svc of LEDGER_SERVICES) {
     if (!neededServices.has(svc.name) || ex.serviceNames.has(svc.name.toLowerCase())) continue;
     const local = localServices.find((l) => l.name.toLowerCase() === svc.name.toLowerCase());
@@ -260,7 +264,8 @@ export async function runLedgerImport(currentUser?: User | null): Promise<Ledger
         name: row.project,
         clientId: client.id,
         clientName: client.name,
-        serviceName: row.service,
+        serviceName: catalogService(row.service).serviceName,
+        subServices: catalogService(row.service).subServices,
         manager: '',
         team: [],
         startDate: row.date,

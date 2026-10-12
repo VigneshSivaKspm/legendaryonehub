@@ -72,8 +72,8 @@ export const LEDGER_SERVICES: { name: string; description: string; pricingType: 
   { name: 'Branding', description: 'Logos and brand identity.', pricingType: 'One-Time' },
   { name: 'Internship Training', description: 'Student internship programmes with certificates.', pricingType: 'Per Unit' },
   { name: 'Certificates & Printing', description: 'Certificate design and printing.', pricingType: 'Per Unit' },
-  { name: 'Graphic Design', description: 'Posters, flex banners and image design.', pricingType: 'Per Unit' },
-  { name: 'Video Editing', description: 'Video editing and production.', pricingType: 'Per Unit' },
+  // Ledger rows marked "Graphic Design" / "Video Editing" are imported as Media Works (see LEGACY_SERVICE_MAP)
+  { name: 'Media Works', description: 'Videos, posters, PDFs and audio produced for clients.', pricingType: 'Per Unit' },
   { name: 'Academic Projects', description: 'College / final-year / ME project development.', pricingType: 'Fixed Price' },
   { name: 'IT Consulting & Staffing', description: 'Project management and consulting retainers.', pricingType: 'Monthly Retainer' },
 ];

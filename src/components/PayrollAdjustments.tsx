@@ -252,6 +252,9 @@ export default function PayrollAdjustments({ selectedMonth }: { selectedMonth: s
                     </td>
                     <td style={{ fontSize: 12.5, color: '#697586', maxWidth: 180 }}>{a.notes || '—'}</td>
                     <td style={{ textAlign: 'right' }}>
+                      {a.source === 'employeeExpense' ? (
+                        <span style={{ fontSize: 11.5, color: '#697586' }}>Edit in Employee Expenses</span>
+                      ) : (
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                         <button type="button" className="btn-secondary" style={{ fontSize: 11.5, padding: '4px 8px' }} onClick={() => openEdit(a)}>
                           <Edit3 size={12} /> Edit
@@ -265,6 +268,7 @@ export default function PayrollAdjustments({ selectedMonth }: { selectedMonth: s
                           <Trash2 size={12} />
                         </button>
                       </div>
+                      )}
                     </td>
                   </tr>
                 ))

@@ -30,6 +30,7 @@ import Assets from './pages/Assets';
 import Documents from './pages/Documents';
 import MyWorkspace, { type WorkspaceTab } from './pages/MyWorkspace';
 import MyAttendance from './pages/MyAttendance';
+import EmployeeExpenses from './pages/EmployeeExpenses';
 import logo from './assets/legendary-one-logo.png';
 
 type AppScreen =
@@ -37,7 +38,7 @@ type AppScreen =
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses';
 
 function MainApp() {
   const {
@@ -176,6 +177,8 @@ function MainApp() {
         return <Leave />;
       case 'payroll':
         return <Payroll />;
+      case 'employee-expenses':
+        return <EmployeeExpenses />;
       case 'assets':
         return <Assets />;
       case 'documents':
