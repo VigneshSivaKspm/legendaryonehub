@@ -6,10 +6,11 @@ import { pendingRequests, isDueOn, isTaskDone, toLocalDate } from '../utils/atte
 import logo from '../assets/legendary-one-logo.png';
 import MobileShell, { type NavEntry } from './MobileShell';
 import { useIsMobile } from '../hooks/useIsMobile';
+import InstallAppButton from './InstallApp';
 
 type NavScreen =
   | 'dashboard' | 'leads' | 'clients' | 'client-profile'
-  | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
+  | 'projects' | 'project-detail' | 'ongoing-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
   | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses' | 'profile' | 'employee-profile'
@@ -273,10 +274,18 @@ export default function Layout({ current, onNav, children }: Props) {
               }
             }
             const label = item.key === 'dashboard' && isSelfService ? 'My Dashboard' : item.label;
+            const activeKey =
+              current === 'project-detail' || current === 'ongoing-detail'
+                ? 'projects'
+                : current === 'client-profile'
+                ? 'clients'
+                : current === 'employee-profile'
+                ? 'employees'
+                : current;
             return (
               <div
                 key={item.key}
-                className={`sidebar-item${current === item.key ? ' active' : ''}`}
+                className={`sidebar-item${activeKey === item.key ? ' active' : ''}`}
                 onClick={() => onNav(item.key as NavScreen)}
               >
                 <span style={{ fontSize: 14, width: 16, textAlign: 'center' }}>{item.icon}</span>
@@ -338,6 +347,7 @@ export default function Layout({ current, onNav, children }: Props) {
               >
                 👤 My Profile
               </button>
+              <InstallAppButton variant="link" className="sidebar-install-link" label="Install as Windows app" />
               <button
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 10px', background: 'none', border: 'none', fontSize: 12.5, color: '#EF4444', cursor: 'pointer', borderRadius: 6, fontWeight: 600 }}
                 onClick={() => { setShowUserMenu(false); logout(); }}
@@ -405,6 +415,9 @@ export default function Layout({ current, onNav, children }: Props) {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+            {/* Install as a desktop app (Chrome / Edge); hidden inside the installed app */}
+            <InstallAppButton style={{ fontSize: 13, padding: '7px 12px' }} />
+
             {/* Quick Add Button & Dropdown */}
             <div style={{ position: 'relative' }}>
               <button className="btn-primary" style={{ fontSize: 13, padding: '7px 14px' }} onClick={() => setShowQuickAdd((v) => !v)}>

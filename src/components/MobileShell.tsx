@@ -29,16 +29,15 @@ import {
   Search,
   X,
   Plus,
-  Download,
   LogOut,
   ChevronRight,
   LayoutGrid,
-  Smartphone,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../db/database';
 import { useInstallPrompt } from '../pwa';
+import InstallAppButton from './InstallApp';
 import { formatTime12h, toLocalDate, isCheckedIn } from '../utils/attendanceTimes';
 import logo from '../assets/legendary-one-logo.png';
 
@@ -78,6 +77,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
 /** Screens shown under another tab (detail pages highlight their list). */
 const PARENT: Record<string, string> = {
   'project-detail': 'projects',
+  'ongoing-detail': 'projects',
   'client-profile': 'clients',
   'employee-profile': 'employees',
 };
@@ -87,6 +87,7 @@ const EXTRA_TITLES: Record<string, string> = {
   'employee-profile': 'Employee Profile',
   'client-profile': 'Client',
   'project-detail': 'Project',
+  'ongoing-detail': 'Ongoing Work',
   'ws:today': "Today's Tasks",
   'ws:tasks': 'All My Tasks',
   'ws:leave': 'My Leave',
@@ -414,22 +415,7 @@ export default function MobileShell(props: Props) {
             </span>
             <span style={{ flex: 1, textAlign: 'left' }}>My Profile</span>
           </button>
-          {installer.canInstall && (
-            <button className="m-drawer-item" onClick={() => installer.install()}>
-              <span className="m-drawer-icon" style={{ background: '#EEF4FF', color: '#3B5BDB' }}>
-                <Download size={19} />
-              </span>
-              <span style={{ flex: 1, textAlign: 'left' }}>Install App</span>
-            </button>
-          )}
-          {installer.needsIOSHelp && (
-            <div className="m-drawer-item" style={{ cursor: 'default' }}>
-              <span className="m-drawer-icon">
-                <Smartphone size={19} />
-              </span>
-              <span style={{ flex: 1, textAlign: 'left', fontSize: 12.5 }}>Install: Share → Add to Home Screen</span>
-            </div>
-          )}
+          {!installer.installed && <InstallAppButton className="m-drawer-item m-drawer-install" label="Install App" />}
           <button className="m-drawer-item danger" onClick={() => { closeOverlays(); logout(); }}>
             <span className="m-drawer-icon">
               <LogOut size={19} />

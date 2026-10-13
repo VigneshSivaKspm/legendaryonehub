@@ -11,6 +11,7 @@ import {
 import { dbFirestore } from '../config/firebase';
 import { db, type ProjectTask } from '../db/database';
 import { notifyTaskAssigned } from './emailNotificationService';
+import { updateDeliverable, deleteDeliverable } from './deliverableService';
 
 const COLLECTION_NAME = 'tasks';
 
@@ -135,9 +136,28 @@ export async function updateTask(
   // Email the new assignee when a task is reassigned
   const prevAssignee = before?.assignedTo || before?.assignee || '';
   if (assignedTo && assignedTo !== prevAssignee) notifyTaskAssigned({ ...before, ...payload });
+
+  // Ongoing-project work is billed to the client when it's completed (and taken off the bill if reopened)
+  const deliverableId = before?.deliverableId;
+  if (deliverableId && updates.status !== undefined && updates.status !== before?.status) {
+    const done = updates.status === 'Completed' || updates.status === 'Done';
+    const d = new Date();
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    try {
+      await updateDeliverable(deliverableId, done ? { status: 'Approved', date, period: date.slice(0, 7) } : { status: 'Pending' });
+    } catch (err) {
+      console.warn('[TaskService] Billing entry update failed:', err);
+    }
+  }
 }
 
 export async function deleteTask(id: string | number): Promise<void> {
+  const existing = await db.tasks.get(id as any);
+  // An unfinished ongoing-project task takes its unbilled entry with it; billed work stays on the client's bill
+  if (existing?.deliverableId && existing.status !== 'Completed' && existing.status !== 'Done') {
+    await deleteDeliverable(existing.deliverableId).catch((err) => console.warn('[TaskService] Billing entry delete failed:', err));
+  }
+
   // Delete from Firestore first (source of truth)
   const docRef = doc(dbFirestore, COLLECTION_NAME, String(id));
   await deleteDoc(docRef);

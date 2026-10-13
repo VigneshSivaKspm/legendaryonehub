@@ -41,7 +41,7 @@ interface AuthContextType {
 
 /** Modules that show every employee's or the company's data; plain employees use My Workspace instead. */
 const SELF_SERVICE_BLOCKED = new Set([
-  'projects', 'project-detail', 'employee-profile',
+  'projects', 'project-detail', 'ongoing-detail', 'employee-profile', 'deliverables',
   'employees', 'attendance', 'leave', 'payroll', 'employee-expenses', 'timesheets',
   'invoices', 'payments', 'expenses', 'quotations', 'reports',
   'services', 'settings', 'assets', 'leads', 'clients', 'client-profile',
@@ -221,7 +221,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return false;
     if (isOwnerOrAdminRole(role)) return true;
     // Personal workspace: everyone with a linked employee record
-    if (screenKey === 'my-workspace' || screenKey === 'my-attendance' || screenKey === 'profile') return true;
+    // Personal pages (own attendance, profile, tasks, leave, salary) are open to everyone signed in
+    if (screenKey === 'my-workspace' || screenKey === 'my-attendance' || screenKey === 'profile' || screenKey.startsWith('ws:')) return true;
     if (isSelfService && SELF_SERVICE_BLOCKED.has(screenKey)) return false;
 
     // Check custom role permissions if configured
@@ -235,7 +236,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (customRoleConfig && customRoleConfig.permissions) {
       let keyToLookup = screenKey;
       if (screenKey === 'client-profile') keyToLookup = 'clients';
-      if (screenKey === 'project-detail') keyToLookup = 'projects';
+      if (screenKey === 'project-detail' || screenKey === 'ongoing-detail') keyToLookup = 'projects';
       if (screenKey === 'employee-profile') keyToLookup = 'employees';
 
       if (customRoleConfig.permissions[keyToLookup] !== undefined) {

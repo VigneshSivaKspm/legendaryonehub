@@ -1,5 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import {
+  CalendarCheck,
+  ListChecks,
+  Fingerprint,
+  Plane,
+  Banknote,
+  CircleUserRound,
+  ChevronRight,
+  Search,
+  Plus,
+  CheckCircle2,
+  AlertTriangle,
+  Clock,
+  Wallet,
+  type LucideIcon,
+} from 'lucide-react';
 import { db, type LeaveRequest, type PayrollRecord, type ProjectTask } from '../db/database';
 import { newestFirst } from '../utils/sort';
 import { useAuth } from '../context/AuthContext';
@@ -8,27 +24,30 @@ import { updateTask } from '../services/taskService';
 import { addLeaveRequest } from '../services/leaveService';
 import { adjustmentsFor } from '../services/payrollAdjustmentService';
 import { calculateLeaveDays } from './Leave';
-import { formatTime12h, formatLunch, formatDuration, isDueOn, isTaskDone } from '../utils/attendanceTimes';
+import { formatTime12h, formatDuration, isDueOn, isTaskDone, isCheckedIn } from '../utils/attendanceTimes';
 import { computeMonthPay, formatRate } from '../utils/salary';
 
-export type WorkspaceTab = 'overview' | 'today' | 'tasks' | 'leave' | 'salary';
-
-const TABS: { key: WorkspaceTab; label: string }[] = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'today', label: "Today's Tasks" },
-  { key: 'tasks', label: 'All My Tasks' },
-  { key: 'leave', label: 'My Leave' },
-  { key: 'salary', label: 'My Salary' },
-];
+/** Each employee page is its own screen: overview (dashboard), today's tasks, all tasks, leave, salary. */
+export type WorkspaceView = 'overview' | 'today' | 'tasks' | 'leave' | 'salary';
+/** @deprecated kept for older imports; use WorkspaceView */
+export type WorkspaceTab = WorkspaceView;
 
 const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned / Paid Leave', 'Unpaid Leave', 'Work From Home'];
 
-const inr = (n: number) => '₹' + (Math.round(Number(n) || 0)).toLocaleString('en-IN');
+const inr = (n: number) => '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN');
 const localDate = (d = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const monthLabel = (m: string) => {
   const [y, mo] = m.split('-').map(Number);
   return new Date(y, (mo || 1) - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+};
+const prettyDate = (d?: string) => {
+  const iso = /^\d{4}-\d{2}-\d{2}/.test(d || '') ? (d as string).slice(0, 10) : '';
+  return iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : d || '—';
+};
+const greeting = () => {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 };
 
 const statusBadge: Record<string, string> = {
@@ -42,50 +61,72 @@ const statusBadge: Record<string, string> = {
   Rejected: 'badge-red',
   Paid: 'badge-green',
 };
+const priorityBadge = (p?: string) => (p === 'High' || p === 'Urgent' ? 'badge-red' : p === 'Medium' || !p ? 'badge-amber' : 'badge-gray');
 
 const labelStyle = { display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 } as const;
 
-function Stat({ label, value, color, sub }: { label: string; value: string; color?: string; sub?: string }) {
+function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
   return (
-    <div className="stat-card" style={{ flex: '1 1 170px' }}>
-      <div style={{ fontSize: 11.5, color: '#697586', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-        {label}
+    <div className="ws-page-head">
+      <div style={{ minWidth: 0 }}>
+        <div className="page-title">{title}</div>
+        {subtitle && <div style={{ fontSize: 13, color: '#697586', marginTop: 2 }}>{subtitle}</div>}
       </div>
-      <div style={{ fontSize: 22, fontWeight: 800, color: color || '#1A1F36', fontFamily: 'Plus Jakarta Sans' }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: '#697586', marginTop: 2 }}>{sub}</div>}
+      {action}
     </div>
   );
 }
 
-export default function MyWorkspace({
-  initialTab = 'overview',
-  onTabChange,
-  onOpenAttendance,
-}: {
-  initialTab?: WorkspaceTab;
-  onTabChange?: (tab: WorkspaceTab) => void;
-  onOpenAttendance?: () => void;
-}) {
+function Tile({ label, value, sub, color }: { label: string; value: string; sub?: string; color: string }) {
+  return (
+    <div className="ws-tile">
+      <div className="ws-tile-label">{label}</div>
+      <div className="ws-tile-value" style={{ color }}>
+        {value}
+      </div>
+      {sub && <div className="ws-tile-sub">{sub}</div>}
+    </div>
+  );
+}
+
+function ProgressBar({ pct, done }: { pct: number; done?: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div className="ws-bar">
+        <div style={{ width: `${pct}%`, background: done ? '#12B76A' : 'linear-gradient(90deg, #3B5BDB, #6D4AE8)' }} />
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 700, color: done ? '#12B76A' : '#1A1F36', minWidth: 34, textAlign: 'right' }}>{pct}%</span>
+    </div>
+  );
+}
+
+function Empty({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  return (
+    <div className="ws-empty">
+      <Icon size={30} color="#98A2B3" />
+      <div>{text}</div>
+    </div>
+  );
+}
+
+interface Props {
+  view?: WorkspaceView;
+  /** Navigate to another screen ('my-attendance', 'ws:today', 'profile', …) */
+  onNav?: (screen: string) => void;
+}
+
+/** Personal pages for a signed-in employee: only their own tasks, attendance, leave and salary. */
+export default function MyWorkspace({ view = 'overview', onNav }: Props) {
   const { user, myEmployee, companyProfile } = useAuth();
   const { showToast } = useToast();
-  const [tab, setTab] = useState<WorkspaceTab>(initialTab);
-
-  const handleSelectTab = (t: WorkspaceTab) => {
-    setTab(t);
-    onTabChange?.(t);
-  };
-
-  useEffect(() => {
-    if (initialTab && initialTab !== tab) {
-      setTab(initialTab);
-    }
-  }, [initialTab]);
   const [busy, setBusy] = useState(false);
   const [showLeaveForm, setShowLeaveForm] = useState(false);
   const [payslip, setPayslip] = useState<PayrollRecord | null>(null);
   // Progress update for an unfinished task: % done + why it's running late
   const [progressTask, setProgressTask] = useState<ProjectTask | null>(null);
   const [progressForm, setProgressForm] = useState({ progress: 0, reason: '' });
+  const [taskFilter, setTaskFilter] = useState<'open' | 'overdue' | 'completed' | 'all'>('open');
+  const [taskSearch, setTaskSearch] = useState('');
   const [leaveForm, setLeaveForm] = useState({
     leaveType: 'Casual Leave',
     fromDate: localDate(),
@@ -148,23 +189,19 @@ export default function MyWorkspace({
 
   const today = localDate();
   const todayRecord = myAttendance.find((a) => a.date === today);
-  const openTasks = myTasks.filter((t) => t.status !== 'Completed' && t.status !== 'Done');
-  const todayTasks = myTasks.filter((t) => isDueOn(t, today));
+  const dueOf = (t: ProjectTask) => String(t.dueDate || t.deadline || '').slice(0, 10);
+  const isOverdue = (t: ProjectTask) => !!dueOf(t) && dueOf(t) < today && !isTaskDone(t);
+  const openTasks = myTasks.filter((t) => !isTaskDone(t));
+  const overdueTasks = myTasks.filter(isOverdue);
+  const completedTasks = myTasks.filter(isTaskDone);
+  // Scheduled posts carry a time (9 AM, 6 PM…): keep the day in that order
+  const todayTasks = myTasks.filter((t) => isDueOn(t, today)).sort((a, b) => (a.dueTime || '99').localeCompare(b.dueTime || '99'));
+  const todayDone = todayTasks.filter(isTaskDone).length;
   const todayNeedsUpdate = todayTasks.filter((t) => !isTaskDone(t) && t.progressUpdatedOn !== today).length;
   const month = today.slice(0, 7);
-  const monthAttendance = myAttendance.filter((a) => a.date.startsWith(month));
-  const counts = monthAttendance.reduce(
-    (acc, a) => {
-      acc[a.status] = (acc[a.status] || 0) + 1;
-      acc.overtime += Number(a.overtimeHours) || 0;
-      return acc;
-    },
-    { overtime: 0 } as Record<string, number>
-  );
   const year = today.slice(0, 4);
-  const leaveDaysThisYear = myLeaves
-    .filter((l) => l.status === 'Approved' && l.fromDate.startsWith(year))
-    .reduce((s, l) => s + (Number(l.days) || 0), 0);
+  const approvedThisYear = myLeaves.filter((l) => l.status === 'Approved' && l.fromDate.startsWith(year));
+  const leaveDaysThisYear = approvedThisYear.reduce((s, l) => s + (Number(l.days) || 0), 0);
   const pendingLeaves = myLeaves.filter((l) => l.status === 'Pending').length;
   const lastPay = myPayroll[0];
   // Salary earned this month under the attendance rules (same maths as the admin payroll)
@@ -176,6 +213,7 @@ export default function MyWorkspace({
     leaves: myLeaves,
     today,
   });
+  const go = (screen: string) => onNav?.(screen);
 
   // ---------- actions ----------
   const run = async (fn: () => Promise<void>) => {
@@ -236,9 +274,7 @@ export default function MyWorkspace({
       showToast('Please enter a reason for the leave.', 'error');
       return;
     }
-    const overlaps = myLeaves.some(
-      (l) => l.status !== 'Rejected' && l.fromDate <= leaveForm.toDate && l.toDate >= leaveForm.fromDate
-    );
+    const overlaps = myLeaves.some((l) => l.status !== 'Rejected' && l.fromDate <= leaveForm.toDate && l.toDate >= leaveForm.fromDate);
     if (overlaps) {
       showToast('You already have a leave request covering these dates.', 'error');
       return;
@@ -271,156 +307,6 @@ export default function MyWorkspace({
     }
   };
 
-  // ---------- render helpers ----------
-  const taskTable = (list: ProjectTask[], compact = false) => (
-    <table className="table-base">
-      <thead>
-        <tr>
-          <th>TASK</th>
-          <th>PROJECT</th>
-          <th>PRIORITY</th>
-          <th>DUE</th>
-          <th>STATUS</th>
-        </tr>
-      </thead>
-      <tbody>
-        {list.length === 0 ? (
-          <tr>
-            <td colSpan={5} style={{ textAlign: 'center', padding: 28, color: '#697586' }}>
-              {compact ? 'No open tasks. Nice work!' : 'No tasks assigned to you yet.'}
-            </td>
-          </tr>
-        ) : (
-          list.map((t) => {
-            const due = t.dueDate || t.deadline || '';
-            const overdue = !!due && due < today && t.status !== 'Completed' && t.status !== 'Done';
-            const normalized = t.status === 'Done' ? 'Completed' : t.status === 'To Do' || t.status === 'Review' ? 'In Progress' : t.status;
-            return (
-              <tr key={t.id}>
-                <td>
-                  <div style={{ fontWeight: 600 }}>{t.title || t.task}</div>
-                  {t.description && <div style={{ fontSize: 11.5, color: '#697586', maxWidth: 320 }}>{t.description}</div>}
-                </td>
-                <td style={{ color: '#697586' }}>{t.projectName || t.project || 'General'}</td>
-                <td>
-                  <span className={`badge ${t.priority === 'High' || t.priority === 'Urgent' ? 'badge-red' : t.priority === 'Medium' ? 'badge-amber' : 'badge-gray'}`}>
-                    {t.priority || 'Medium'}
-                  </span>
-                </td>
-                <td style={{ color: overdue ? '#EF4444' : '#697586', fontWeight: overdue ? 600 : 400 }}>
-                  {due || '—'}
-                  {overdue && ' · overdue'}
-                </td>
-                <td>
-                  <select
-                    className="select-base"
-                    style={{ fontSize: 12.5, padding: '4px 8px' }}
-                    value={normalized || 'Pending'}
-                    onChange={(e) => handleTaskStatus(t, e.target.value as ProjectTask['status'])}
-                  >
-                    <option value="Pending">Pending</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="Completed">Completed</option>
-                  </select>
-                </td>
-              </tr>
-            );
-          })
-        )}
-      </tbody>
-    </table>
-  );
-
-  const progressBar = (pct: number, color: string) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 6, background: '#E5E9F2', borderRadius: 3, overflow: 'hidden', minWidth: 80 }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: color }} />
-      </div>
-      <span style={{ fontSize: 12, fontWeight: 700, color: '#1A1F36', width: 34 }}>{pct}%</span>
-    </div>
-  );
-
-  const todayTasksPanel = () => (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36' }}>
-          Today's tasks · {todayTasks.filter(isTaskDone).length}/{todayTasks.length} completed
-        </div>
-        {todayNeedsUpdate > 0 && (
-          <span className="badge badge-amber">
-            {todayNeedsUpdate} task{todayNeedsUpdate > 1 ? 's' : ''} need{todayNeedsUpdate > 1 ? '' : 's'} an update before check-out
-          </span>
-        )}
-      </div>
-      <table className="table-base">
-        <thead>
-          <tr>
-            <th>TASK</th>
-            <th>PROJECT</th>
-            <th>PRIORITY</th>
-            <th style={{ width: 180 }}>PROGRESS</th>
-            <th>REASON IF PENDING</th>
-            <th style={{ textAlign: 'right' }}>ACTIONS</th>
-          </tr>
-        </thead>
-        <tbody>
-          {todayTasks.length === 0 ? (
-            <tr>
-              <td colSpan={6} style={{ textAlign: 'center', padding: 28, color: '#697586' }}>
-                No tasks are due today.
-              </td>
-            </tr>
-          ) : (
-            todayTasks.map((t) => {
-              const done = isTaskDone(t);
-              const updatedToday = t.progressUpdatedOn === today;
-              return (
-                <tr key={t.id}>
-                  <td>
-                    <div style={{ fontWeight: 600 }}>{t.title || t.task}</div>
-                    {t.description && <div style={{ fontSize: 11.5, color: '#697586', maxWidth: 300 }}>{t.description}</div>}
-                  </td>
-                  <td style={{ color: '#697586' }}>{t.projectName || t.project || 'General'}</td>
-                  <td>
-                    <span className={`badge ${t.priority === 'High' || t.priority === 'Urgent' ? 'badge-red' : t.priority === 'Medium' ? 'badge-amber' : 'badge-gray'}`}>
-                      {t.priority || 'Medium'}
-                    </span>
-                  </td>
-                  <td>{progressBar(done ? 100 : Number(t.progress) || 0, done ? '#12B76A' : '#3B5BDB')}</td>
-                  <td style={{ fontSize: 12.5, color: '#475569', maxWidth: 260 }}>
-                    {done ? (
-                      <span className="badge badge-green">Completed</span>
-                    ) : updatedToday ? (
-                      t.delayReason
-                    ) : (
-                      <span style={{ color: '#B54708' }}>Update needed</span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    {!done && (
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        <button
-                          className="btn-primary"
-                          style={{ fontSize: 11.5, padding: '4px 10px' }}
-                          onClick={() => handleTaskStatus(t, 'Completed')}
-                        >
-                          ✓ Mark Completed
-                        </button>
-                        <button className="btn-secondary" style={{ fontSize: 11.5, padding: '4px 10px' }} onClick={() => openProgress(t)}>
-                          {updatedToday ? 'Edit Progress' : 'Still Pending'}
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-
   const payslipRows = (p: PayrollRecord) => {
     const adj = adjustmentsFor(adjustments, p.employeeId, p.month);
     const allowanceItems = adj.filter((a) => a.type === 'Allowance');
@@ -428,241 +314,423 @@ export default function MyWorkspace({
     const earnings: [string, number][] = [
       ['Basic Salary', p.baseSalary],
       ...(allowanceItems.length ? allowanceItems.map((a) => [a.component, a.amount] as [string, number]) : [['Allowances', p.allowances] as [string, number]]),
-      ['Bonus', p.bonus],
+      ['Bonus / Incentive', p.bonus],
       ['Overtime', p.overtime],
     ];
     const deductions: [string, number][] = [
+      [`Absent (${p.absentDays || 0} d)`, Number(p.absentDeduction) || 0],
       ['Unpaid Leave', p.unpaidLeaveDeduction],
+      [`Short time (${p.shortMinutes || 0} min)`, Number(p.shortTimeDeduction) || 0],
       ...(deductionItems.length ? deductionItems.map((a) => [a.component, a.amount] as [string, number]) : [['Other Deductions', p.otherDeductions] as [string, number]]),
     ];
     return { earnings: earnings.filter(([, v]) => Number(v) > 0 || v === p.baseSalary), deductions: deductions.filter(([, v]) => Number(v) > 0) };
   };
 
-  return (
-    <div style={{ padding: '24px', maxWidth: 1400, margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
-        <div>
-          <div className="page-title">Hi, {myEmployee.name.split(' ')[0]} 👋</div>
-          <div style={{ fontSize: 13, color: '#697586', marginTop: 2 }}>
-            {myEmployee.role} · {myEmployee.employeeId}
-          </div>
-        </div>
-        <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', maxWidth: '100%' }}>
-          <div>
-            <div style={{ fontSize: 11.5, color: '#697586', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Today</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#1A1F36' }}>
-              {todayRecord ? (
-                <>
-                  <span className={`badge ${statusBadge[todayRecord.status] || 'badge-gray'}`}>{todayRecord.status}</span>{' '}
-                  {todayRecord.checkIn && `In ${formatTime12h(todayRecord.checkIn)}`}
-                  {todayRecord.lunchOut && ` · Lunch ${formatLunch(todayRecord)}`}
-                  {todayRecord.checkOut && ` · Out ${formatTime12h(todayRecord.checkOut)}`}
-                </>
-              ) : (
-                'Not checked in'
+  // ---------- shared pieces ----------
+  const taskCard = (t: ProjectTask, mode: 'today' | 'list') => {
+    const done = isTaskDone(t);
+    const pct = done ? 100 : Number(t.progress) || 0;
+    const updatedToday = t.progressUpdatedOn === today;
+    const overdue = isOverdue(t);
+    const normalized = t.status === 'Done' ? 'Completed' : t.status === 'To Do' || t.status === 'Review' ? 'In Progress' : t.status || 'Pending';
+    return (
+      <div key={t.id} className={`ws-card${done ? ' done' : ''}`}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+          <div style={{ minWidth: 0 }}>
+            <div className="ws-card-title">{t.title || t.task}</div>
+            <div className="ws-card-meta">
+              {t.projectName || t.project || 'General'}
+              {dueOf(t) && mode === 'list' && (
+                <span style={{ color: overdue ? '#D92D20' : undefined, fontWeight: overdue ? 700 : 500 }}>
+                  {' '}
+                  · {overdue ? 'Overdue · ' : 'Due '}
+                  {prettyDate(dueOf(t))}
+                </span>
               )}
             </div>
           </div>
-          {onOpenAttendance && (
-            <button className={todayRecord ? 'btn-secondary' : 'btn-primary'} onClick={onOpenAttendance}>
-              {todayRecord ? 'My Attendance →' : 'Check In →'}
-            </button>
+          <span className={`badge ${priorityBadge(t.priority)}`} style={{ flexShrink: 0 }}>
+            {t.priority || 'Medium'}
+          </span>
+        </div>
+        {(t.workType || t.dueTime || t.channels?.length) && (
+          <div className="ws-work-chips">
+            {t.workType && (
+              <span className="ws-work-chip">
+                {t.workType}
+                {(t.quantity || 0) > 1 ? ` × ${t.quantity}` : ''}
+              </span>
+            )}
+            {t.dueTime && (
+              <span className="ws-work-chip time">
+                <Clock size={12} /> {formatTime12h(t.dueTime)}
+                {mode === 'list' && dueOf(t) ? ` · ${prettyDate(dueOf(t))}` : ''}
+              </span>
+            )}
+            {(t.channels || []).map((c) => (
+              <span key={c} className="ws-work-chip channel">
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
+        {t.description && <div className={`ws-card-desc${mode === 'today' ? ' full' : ''}`}>{t.description}</div>}
+        <div style={{ marginTop: 10 }}>
+          <ProgressBar pct={pct} done={done} />
+        </div>
+        {mode === 'today' && !done && (
+          <div className={`ws-note${updatedToday ? '' : ' warn'}`}>
+            {updatedToday ? (
+              <>
+                <Clock size={13} /> {t.delayReason}
+              </>
+            ) : (
+              <>
+                <AlertTriangle size={13} /> Update needed before you check out
+              </>
+            )}
+          </div>
+        )}
+        {mode === 'list' && !done && t.delayReason && (
+          <div className="ws-note">
+            <Clock size={13} /> {t.delayReason}
+          </div>
+        )}
+        <div className="ws-card-actions">
+          {mode === 'today' ? (
+            done ? (
+              <span className="badge badge-green" style={{ padding: '5px 10px' }}>
+                <CheckCircle2 size={13} /> Completed
+              </span>
+            ) : (
+              <>
+                <button className="btn-primary" onClick={() => handleTaskStatus(t, 'Completed')}>
+                  <CheckCircle2 size={15} /> Mark Completed
+                </button>
+                <button className="btn-secondary" onClick={() => openProgress(t)}>
+                  {updatedToday ? 'Edit Progress' : 'Still Pending'}
+                </button>
+              </>
+            )
+          ) : (
+            <select
+              className="select-base"
+              style={{ minWidth: 150 }}
+              value={normalized}
+              onChange={(e) => handleTaskStatus(t, e.target.value as ProjectTask['status'])}
+              aria-label="Task status"
+            >
+              <option value="Pending">Pending</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Completed">Completed</option>
+            </select>
           )}
         </div>
       </div>
+    );
+  };
 
-      {/* KPIs */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-        <Stat label="Open Tasks" value={String(openTasks.length)} color="#3B5BDB" sub={`${myTasks.length} total assigned`} />
-        <Stat
-          label={`Present · ${monthLabel(month).split(' ')[0]}`}
-          value={String((counts.Present || 0) + (counts.Late || 0) + (counts['Half Day'] || 0) * 0.5)}
-          color="#12B76A"
-          sub={counts.overtime ? `${counts.overtime}h overtime` : undefined}
-        />
-        <Stat label={`Leave Taken ${year}`} value={`${leaveDaysThisYear} d`} color="#8B5CF6" sub={pendingLeaves ? `${pendingLeaves} pending` : undefined} />
-        <Stat
-          label="Last Salary"
-          value={lastPay ? inr(lastPay.netSalary) : '—'}
-          color="#1A1F36"
-          sub={lastPay ? `${monthLabel(lastPay.month)} · ${lastPay.status}` : 'No payroll yet'}
-        />
-      </div>
+  const attendanceLine = todayRecord?.checkOut
+    ? `Checked out at ${formatTime12h(todayRecord.checkOut)}`
+    : isCheckedIn(todayRecord)
+    ? `Checked in at ${formatTime12h(todayRecord?.checkIn)}`
+    : todayRecord?.checkInRequest?.status === 'Pending'
+    ? 'Late check-in awaiting approval'
+    : todayRecord
+    ? todayRecord.status
+    : 'Not checked in yet';
 
-      {/* Tabs */}
-      <div className="card">
-        <div style={{ padding: '0 12px', borderBottom: '1px solid #E5E9F2', display: 'flex', gap: 4, overflowX: 'auto' }}>
-          {TABS.map((t) => (
-            <button key={t.key} className={`tab-btn${tab === t.key ? ' active' : ''}`} style={{ padding: '10px 14px' }} onClick={() => handleSelectTab(t.key)}>
-              {t.label}
-              {t.key === 'today' && todayNeedsUpdate > 0 && (
-                <span style={{ marginLeft: 6, background: '#F79009', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 6px' }}>
-                  {todayNeedsUpdate}
-                </span>
-              )}
+  // ---------- pages ----------
+  let page: React.ReactNode;
+
+  if (view === 'overview') {
+    const shortcuts: { key: string; label: string; sub: string; icon: LucideIcon; tone: string; badge?: number }[] = [
+      {
+        key: 'ws:today',
+        label: "Today's Tasks",
+        sub: todayTasks.length ? `${todayDone}/${todayTasks.length} done` : 'Nothing due today',
+        icon: CalendarCheck,
+        tone: 'blue',
+        badge: todayNeedsUpdate,
+      },
+      { key: 'ws:tasks', label: 'All My Tasks', sub: `${openTasks.length} open${overdueTasks.length ? ` · ${overdueTasks.length} overdue` : ''}`, icon: ListChecks, tone: 'violet' },
+      { key: 'my-attendance', label: 'My Attendance', sub: attendanceLine, icon: Fingerprint, tone: 'green' },
+      { key: 'ws:leave', label: 'My Leave', sub: pendingLeaves ? `${pendingLeaves} pending` : `${leaveDaysThisYear} d taken in ${year}`, icon: Plane, tone: 'amber' },
+      { key: 'ws:salary', label: 'My Salary', sub: `${inr(monthPay.earnedToDate)} earned this month`, icon: Banknote, tone: 'teal' },
+      { key: 'profile', label: 'My Profile', sub: myEmployee.employeeId || 'Details & account', icon: CircleUserRound, tone: 'slate' },
+    ];
+    page = (
+      <>
+        <div className="ws-hero">
+          <div className="ws-hero-glow" />
+          <div style={{ position: 'relative', minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.72)', fontWeight: 600 }}>
+              {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </div>
+            <div className="ws-hero-title">
+              {greeting()}, {myEmployee.name.split(' ')[0]} 👋
+            </div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.78)' }}>
+              {myEmployee.role} · {myEmployee.employeeId}
+            </div>
+          </div>
+          <button className="ws-hero-status" onClick={() => go('my-attendance')}>
+            <span className={`m-dot ${todayRecord?.checkOut ? 'done' : isCheckedIn(todayRecord) ? 'on' : 'off'}`} />
+            <span style={{ flex: 1, textAlign: 'left' }}>
+              <span style={{ display: 'block', fontSize: 11, opacity: 0.7, fontWeight: 600 }}>TODAY</span>
+              <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700 }}>{attendanceLine}</span>
+            </span>
+            <span className="ws-hero-cta">{!todayRecord ? 'Check In' : todayRecord.checkOut ? 'View' : 'Open'}</span>
+          </button>
+        </div>
+
+        <div className="ws-tiles">
+          <Tile label="Open Tasks" value={String(openTasks.length)} sub={`${myTasks.length} assigned`} color="#3B5BDB" />
+          <Tile
+            label={`Present · ${monthLabel(month).split(' ')[0]}`}
+            value={String(monthPay.presentDays + monthPay.halfDays * 0.5)}
+            sub={`${formatDuration(monthPay.workedMinutes)} worked`}
+            color="#12B76A"
+          />
+          <Tile label={`Leave ${year}`} value={`${leaveDaysThisYear} d`} sub={pendingLeaves ? `${pendingLeaves} pending` : 'Approved'} color="#8B5CF6" />
+          <Tile label="Last Salary" value={lastPay ? inr(lastPay.netSalary) : '—'} sub={lastPay ? `${monthLabel(lastPay.month)} · ${lastPay.status}` : 'No payroll yet'} color="#1A1F36" />
+        </div>
+
+        <div className="ws-section-title">Quick access</div>
+        <div className="ws-shortcuts">
+          {shortcuts.map((s) => (
+            <button key={s.key} className="ws-shortcut" onClick={() => go(s.key)}>
+              <span className={`ws-shortcut-icon tone-${s.tone}`}>
+                <s.icon size={21} />
+                {!!s.badge && <span className="m-badge">{s.badge}</span>}
+              </span>
+              <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                <span className="ws-shortcut-label">{s.label}</span>
+                <span className="ws-shortcut-sub">{s.sub}</span>
+              </span>
+              <ChevronRight size={17} color="#98A2B3" />
             </button>
           ))}
         </div>
 
-        <div style={{ padding: 20 }}>
-          {tab === 'today' && todayTasksPanel()}
-
-          {tab === 'overview' && todayTasks.length > 0 && <div style={{ marginBottom: 20 }}>{todayTasksPanel()}</div>}
-
-          {tab === 'overview' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 16 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36', marginBottom: 10 }}>Open tasks</div>
-                {taskTable(openTasks.slice(0, 6), true)}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ background: '#F8F9FC', borderRadius: 12, padding: 16 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36', marginBottom: 8 }}>Recent leave</div>
-                  {myLeaves.slice(0, 3).map((l) => (
-                    <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '6px 0', borderBottom: '1px solid #E5E9F2' }}>
-                      <span>
-                        {l.leaveType} · {l.fromDate}
-                        {l.toDate !== l.fromDate ? ` → ${l.toDate}` : ''}
-                      </span>
-                      <span className={`badge ${statusBadge[l.status]}`}>{l.status}</span>
-                    </div>
-                  ))}
-                  {myLeaves.length === 0 && <div style={{ fontSize: 12.5, color: '#697586' }}>No leave requests yet.</div>}
-                  <button className="btn-secondary" style={{ fontSize: 12, marginTop: 10 }} onClick={() => { handleSelectTab('leave'); setShowLeaveForm(true); }}>
-                    + Apply for Leave
-                  </button>
-                </div>
-                <div style={{ background: '#F8F9FC', borderRadius: 12, padding: 16 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36', marginBottom: 8 }}>Working hours</div>
-                  <div style={{ fontSize: 12.5, color: '#475569', lineHeight: 1.6 }}>
-                    9:00 AM – 6:00 PM. Check in by 9:00 AM; a later check-in needs admin approval. Lunch break is up to 1 hour.
-                    Check out from 6:00 PM once today's tasks are completed, otherwise send a check-out request. Time after 6:00 PM
-                    is recorded as overtime.
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {tab === 'tasks' && taskTable(myTasks)}
-
-          {tab === 'leave' && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: '#1A1F36' }}>My leave requests</div>
-                <button className="btn-primary" style={{ fontSize: 13 }} onClick={() => setShowLeaveForm(true)}>
-                  + Apply for Leave
-                </button>
-              </div>
-              <table className="table-base">
-                <thead>
-                  <tr>
-                    <th>TYPE</th>
-                    <th>DATES</th>
-                    <th>DAYS</th>
-                    <th>REASON</th>
-                    <th>STATUS</th>
-                    <th>REMARKS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {myLeaves.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', padding: 28, color: '#697586' }}>
-                        No leave requests yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    myLeaves.map((l) => (
-                      <tr key={l.id}>
-                        <td style={{ fontWeight: 600 }}>
-                          {l.leaveType}
-                          {l.isHalfDay && <span style={{ fontSize: 11, color: '#697586' }}> ({l.halfDaySession})</span>}
-                        </td>
-                        <td>
-                          {l.fromDate}
-                          {l.toDate !== l.fromDate ? ` → ${l.toDate}` : ''}
-                        </td>
-                        <td>{l.days}</td>
-                        <td style={{ maxWidth: 240, fontSize: 12.5, color: '#475569' }}>{l.reason}</td>
-                        <td>
-                          <span className={`badge ${statusBadge[l.status]}`}>{l.status}</span>
-                        </td>
-                        <td style={{ fontSize: 12.5, color: '#697586' }}>{l.adminRemarks || '—'}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {tab === 'salary' && (
-            <>
-            <div style={{ background: '#F8F9FC', border: '1px solid #E5E9F2', borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#1A1F36', marginBottom: 10 }}>{monthLabel(month)} so far</div>
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <Stat label="Per Day" value={formatRate(monthPay.rates.daily)} sub={`${monthPay.workingDays} working days`} />
-                <Stat label="Per Hour" value={formatRate(monthPay.rates.hourly)} />
-                <Stat label="Per Minute" value={formatRate(monthPay.rates.perMinute)} />
-                <Stat label="Earned So Far" value={inr(monthPay.earnedToDate)} color="#12B76A" sub={`${formatDuration(monthPay.workedMinutes)} worked`} />
-                <Stat
-                  label="Deducted So Far"
-                  value={inr(monthPay.absentDeduction + monthPay.unpaidLeaveDeduction + monthPay.shortTimeDeduction)}
-                  color="#EF4444"
-                  sub={`${monthPay.absentDays} absent · ${monthPay.shortMinutes} min short`}
-                />
-              </div>
-              <div style={{ fontSize: 11.5, color: '#697586', marginTop: 8 }}>
-                Late arrival, early leave and lunch beyond 1 hour are deducted per minute. Absent days and unpaid leave are deducted per day.
-                Incentives and bonuses added by the admin appear on your payslip.
-              </div>
-            </div>
-            <table className="table-base">
-              <thead>
-                <tr>
-                  <th>MONTH</th>
-                  <th style={{ textAlign: 'right' }}>GROSS</th>
-                  <th style={{ textAlign: 'right' }}>DEDUCTIONS</th>
-                  <th style={{ textAlign: 'right' }}>NET PAY</th>
-                  <th>STATUS</th>
-                  <th>PAID ON</th>
-                  <th style={{ textAlign: 'right' }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {myPayroll.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: 28, color: '#697586' }}>
-                      No salary records yet. They appear here once payroll is generated.
-                    </td>
-                  </tr>
-                ) : (
-                  myPayroll.map((p) => (
-                    <tr key={p.id}>
-                      <td style={{ fontWeight: 600 }}>{monthLabel(p.month)}</td>
-                      <td style={{ textAlign: 'right' }}>{inr(p.grossSalary)}</td>
-                      <td style={{ textAlign: 'right', color: '#EF4444' }}>{inr(p.totalDeductions)}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 700, color: '#12B76A' }}>{inr(p.netSalary)}</td>
-                      <td>
-                        <span className={`badge ${statusBadge[p.status] || 'badge-amber'}`}>{p.status}</span>
-                      </td>
-                      <td style={{ color: '#697586' }}>{p.paymentDate || '—'}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button className="btn-secondary" style={{ fontSize: 11.5, padding: '4px 10px' }} onClick={() => setPayslip(p)}>
-                          View Payslip
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-            </>
+        <div className="ws-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Due today</span>
+          {todayTasks.length > 0 && (
+            <button className="ws-link" onClick={() => go('ws:today')}>
+              See all <ChevronRight size={14} />
+            </button>
           )}
         </div>
-      </div>
+        {todayTasks.length === 0 ? (
+          <Empty icon={CheckCircle2} text="No tasks are due today." />
+        ) : (
+          <div className="ws-list">{todayTasks.slice(0, 3).map((t) => taskCard(t, 'today'))}</div>
+        )}
+
+        <div className="ws-info">
+          <Clock size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            Working hours 9:00 AM – 6:00 PM. Check in by 9:00 AM; a later check-in needs admin approval. Lunch break is up to 1 hour. Check out
+            from 6:00 PM once today's tasks are completed, otherwise send a check-out request.
+          </span>
+        </div>
+      </>
+    );
+  } else if (view === 'today') {
+    page = (
+      <>
+        <PageHeader
+          title="Today's Tasks"
+          subtitle={`${new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })} · ${todayDone}/${todayTasks.length} completed`}
+        />
+        {todayTasks.length > 0 && (
+          <div className="ws-progress-card">
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#697586', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Today's progress</div>
+              <div style={{ marginTop: 8 }}>
+                <ProgressBar pct={Math.round((todayDone / todayTasks.length) * 100)} done={todayDone === todayTasks.length} />
+              </div>
+            </div>
+          </div>
+        )}
+        {todayNeedsUpdate > 0 && (
+          <div className="ws-alert">
+            <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+            <span>
+              {todayNeedsUpdate} task{todayNeedsUpdate > 1 ? 's need' : ' needs'} an update before you can check out: mark completed, or give the % done
+              and a reason.
+            </span>
+          </div>
+        )}
+        {todayTasks.length === 0 ? <Empty icon={CheckCircle2} text="No tasks are due today. Enjoy the calm!" /> : <div className="ws-list">{todayTasks.map((t) => taskCard(t, 'today'))}</div>}
+      </>
+    );
+  } else if (view === 'tasks') {
+    const lists = { open: openTasks, overdue: overdueTasks, completed: completedTasks, all: myTasks };
+    const q = taskSearch.trim().toLowerCase();
+    const shown = lists[taskFilter].filter(
+      (t) => !q || [t.title, t.task, t.description, t.projectName, t.project].some((v) => (v || '').toLowerCase().includes(q))
+    );
+    page = (
+      <>
+        <PageHeader title="All My Tasks" subtitle={`${myTasks.length} assigned · ${openTasks.length} open`} />
+        <div className="ws-search">
+          <Search size={17} color="#98A2B3" />
+          <input placeholder="Search tasks or projects" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
+        </div>
+        <div className="ws-chips">
+          {(
+            [
+              ['open', 'Open', openTasks.length],
+              ['overdue', 'Overdue', overdueTasks.length],
+              ['completed', 'Completed', completedTasks.length],
+              ['all', 'All', myTasks.length],
+            ] as const
+          ).map(([key, label, count]) => (
+            <button key={key} className={`ws-chip${taskFilter === key ? ' active' : ''}`} onClick={() => setTaskFilter(key)}>
+              {label} <span className="ws-chip-count">{count}</span>
+            </button>
+          ))}
+        </div>
+        {shown.length === 0 ? (
+          <Empty icon={ListChecks} text={myTasks.length === 0 ? 'No tasks assigned to you yet.' : 'Nothing here.'} />
+        ) : (
+          <div className="ws-list">{shown.map((t) => taskCard(t, 'list'))}</div>
+        )}
+      </>
+    );
+  } else if (view === 'leave') {
+    page = (
+      <>
+        <PageHeader
+          title="My Leave"
+          subtitle={`${leaveDaysThisYear} day(s) taken in ${year}`}
+          action={
+            <button className="btn-primary" onClick={() => setShowLeaveForm(true)}>
+              <Plus size={16} /> Apply for Leave
+            </button>
+          }
+        />
+        <div className="ws-tiles">
+          <Tile label={`Taken ${year}`} value={`${leaveDaysThisYear} d`} sub={`${approvedThisYear.length} request(s)`} color="#8B5CF6" />
+          <Tile label="Pending" value={String(pendingLeaves)} sub="Awaiting approval" color="#F59E0B" />
+          <Tile label="Approved" value={String(myLeaves.filter((l) => l.status === 'Approved').length)} color="#12B76A" />
+          <Tile label="Rejected" value={String(myLeaves.filter((l) => l.status === 'Rejected').length)} color="#EF4444" />
+        </div>
+        {myLeaves.length === 0 ? (
+          <Empty icon={Plane} text="No leave requests yet. Tap Apply for Leave to send one." />
+        ) : (
+          <div className="ws-list">
+            {myLeaves.map((l) => (
+              <div key={l.id} className="ws-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="ws-card-title">
+                      {l.leaveType}
+                      {l.isHalfDay && <span style={{ fontSize: 12, color: '#697586', fontWeight: 500 }}> · {l.halfDaySession}</span>}
+                    </div>
+                    <div className="ws-card-meta">
+                      {prettyDate(l.fromDate)}
+                      {l.toDate !== l.fromDate ? ` → ${prettyDate(l.toDate)}` : ''} · {l.days} day(s)
+                    </div>
+                  </div>
+                  <span className={`badge ${statusBadge[l.status]}`} style={{ flexShrink: 0 }}>
+                    {l.status}
+                  </span>
+                </div>
+                {l.reason && <div className="ws-card-desc">{l.reason}</div>}
+                {l.adminRemarks && (
+                  <div className="ws-note">
+                    <CircleUserRound size={13} /> Admin: {l.adminRemarks}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  } else {
+    // salary
+    const deducted = monthPay.absentDeduction + monthPay.unpaidLeaveDeduction + monthPay.shortTimeDeduction;
+    page = (
+      <>
+        <PageHeader title="My Salary" subtitle={`Monthly salary ${inr(Number(myEmployee.salary) || 0)}`} />
+        <div className="ws-salary-hero">
+          <div className="ws-hero-glow" />
+          <div style={{ position: 'relative' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              {monthLabel(month)} · earned so far
+            </div>
+            <div className="ws-salary-amount">{inr(monthPay.earnedToDate)}</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>
+              {formatDuration(monthPay.workedMinutes)} worked · {deducted ? `${inr(deducted)} deducted` : 'no deductions'}
+            </div>
+            <div className="ws-rates">
+              {[
+                ['Per day', formatRate(monthPay.rates.daily)],
+                ['Per hour', formatRate(monthPay.rates.hourly)],
+                ['Per minute', formatRate(monthPay.rates.perMinute)],
+              ].map(([k, v]) => (
+                <div key={k}>
+                  <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600 }}>{k}</div>
+                  <div style={{ fontSize: 15, fontWeight: 800 }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        {deducted > 0 && (
+          <div className="ws-alert" style={{ background: '#FEF3F2', borderColor: '#FECDCA', color: '#B42318' }}>
+            <Wallet size={16} style={{ flexShrink: 0 }} />
+            <span>
+              {monthPay.absentDays ? `${monthPay.absentDays} absent day(s)` : ''}
+              {monthPay.absentDays && monthPay.shortMinutes ? ' · ' : ''}
+              {monthPay.shortMinutes ? `${monthPay.shortMinutes} min late / early / long lunch` : ''}
+              {monthPay.unpaidLeaveDays ? ` · ${monthPay.unpaidLeaveDays} unpaid leave day(s)` : ''}
+            </span>
+          </div>
+        )}
+        <div className="ws-section-title">Payslips</div>
+        {myPayroll.length === 0 ? (
+          <Empty icon={Banknote} text="No payslips yet. They appear here once payroll is generated." />
+        ) : (
+          <div className="ws-list">
+            {myPayroll.map((p) => (
+              <button key={p.id} className="ws-card ws-card-button" onClick={() => setPayslip(p)}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                  <div style={{ textAlign: 'left' }}>
+                    <div className="ws-card-title">{monthLabel(p.month)}</div>
+                    <div className="ws-card-meta">
+                      Gross {inr(p.grossSalary)} · Deductions {inr(p.totalDeductions)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: '#12B76A', fontFamily: 'Plus Jakarta Sans' }}>{inr(p.netSalary)}</div>
+                    <span className={`badge ${statusBadge[p.status] || 'badge-amber'}`}>
+                      {p.status}
+                      {p.paymentDate ? ` · ${prettyDate(p.paymentDate)}` : ''}
+                    </span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="ws-info">
+          <Wallet size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            Late arrival, early leave and lunch beyond 1 hour are deducted per minute. Absent days and unpaid leave are deducted per day. Incentives and
+            bonuses added by the admin appear on your payslip.
+          </span>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div className="ws-page" style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
+      {page}
 
       {/* Apply leave modal */}
       {showLeaveForm && (
@@ -694,7 +762,7 @@ export default function MyWorkspace({
                   <label style={labelStyle}>To *</label>
                   <input className="input-base" type="date" min={leaveForm.fromDate} value={leaveForm.toDate} onChange={(e) => setLeaveForm({ ...leaveForm, toDate: e.target.value })} />
                 </div>
-                <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#1A1F36', cursor: 'pointer' }}>
                     <input type="checkbox" checked={leaveForm.isHalfDay} onChange={(e) => setLeaveForm({ ...leaveForm, isHalfDay: e.target.checked })} />
                     Half day
@@ -743,7 +811,7 @@ export default function MyWorkspace({
                     key={p}
                     type="button"
                     className={progressForm.progress === p ? 'btn-primary' : 'btn-secondary'}
-                    style={{ fontSize: 12, padding: '5px 10px', minWidth: 48 }}
+                    style={{ fontSize: 12, padding: '5px 10px', minWidth: 52 }}
                     onClick={() => setProgressForm({ ...progressForm, progress: p })}
                   >
                     {p}%
@@ -759,9 +827,7 @@ export default function MyWorkspace({
                 value={progressForm.reason}
                 onChange={(e) => setProgressForm({ ...progressForm, reason: e.target.value })}
               />
-              <div style={{ fontSize: 11.5, color: '#697586', marginTop: 6 }}>
-                If the task is done, close this and use "Mark Completed" instead.
-              </div>
+              <div style={{ fontSize: 11.5, color: '#697586', marginTop: 6 }}>If the task is done, close this and use "Mark Completed" instead.</div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
                 <button type="button" className="btn-secondary" onClick={() => setProgressTask(null)} disabled={busy}>
                   Cancel
@@ -779,7 +845,7 @@ export default function MyWorkspace({
       {payslip && (
         <div className="modal-overlay" onClick={() => setPayslip(null)}>
           <div className="modal-box" style={{ width: 560, maxWidth: '100%', padding: 28 }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 10 }}>
               <div>
                 <div style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 700, fontSize: 17, color: '#1A1F36' }}>Payslip · {monthLabel(payslip.month)}</div>
                 <div style={{ fontSize: 12.5, color: '#697586' }}>
@@ -790,12 +856,12 @@ export default function MyWorkspace({
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 14 }}>
               {(['earnings', 'deductions'] as const).map((side) => (
-                <div key={side} style={{ background: '#F8F9FC', borderRadius: 10, padding: 14 }}>
+                <div key={side} style={{ background: '#F8F9FC', borderRadius: 12, padding: 14 }}>
                   <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: side === 'earnings' ? '#12B76A' : '#EF4444' }}>
                     {side === 'earnings' ? 'Earnings' : 'Deductions'}
                   </div>
                   {payslipRows(payslip)[side].map(([label, val]) => (
-                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '4px 0' }}>
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '4px 0', gap: 8 }}>
                       <span style={{ color: '#475569' }}>{label}</span>
                       <span style={{ fontWeight: 600 }}>{inr(val)}</span>
                     </div>
@@ -807,7 +873,7 @@ export default function MyWorkspace({
             <div style={{ fontSize: 12.5, color: '#697586', marginBottom: 10 }}>
               Working days {payslip.workingDays} · Present {payslip.presentDays} · Paid leave {payslip.paidLeaveDays} · Unpaid leave {payslip.unpaidLeaveDays}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ECFDF5', borderRadius: 10, padding: '12px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ECFDF5', borderRadius: 12, padding: '12px 16px' }}>
               <span style={{ fontWeight: 700, color: '#065F46' }}>Net Pay</span>
               <span style={{ fontWeight: 800, fontSize: 20, color: '#059669' }}>{inr(payslip.netSalary)}</span>
             </div>

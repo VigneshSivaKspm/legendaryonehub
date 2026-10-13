@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Project, type ProjectTask, type ProjectMilestone, type ProjectFile } from '../db/database';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { db, type Payment, type Project, type ProjectTask, type ProjectMilestone, type ProjectFile } from '../db/database';
 import { newestFirst } from '../utils/sort';
 import { updateProject, addProjectMilestone, addProjectFile, addProjectActivity } from '../services/projectService';
+import { deletePayment } from '../services/paymentService';
 import { addTask } from '../services/taskService';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import EmployeeSelect from '../components/EmployeeSelect';
 import CredentialsPanel from '../components/CredentialsPanel';
+import { PaymentModal } from '../components/OngoingDialogs';
+import OngoingProjectDetail from './OngoingProjectDetail';
 import { isOwnerOrAdminRole } from '../services/authService';
 import { computeProjectFinancials, paymentsForProject } from '../utils/financials';
 import { toDisplayDate } from '../utils/dateMask';
@@ -37,6 +41,7 @@ export default function ProjectDetail({ projectId, onBack }: Props) {
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [showFileModal, setShowFileModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [paymentModal, setPaymentModal] = useState<{ open: boolean; payment?: Payment }>({ open: false });
 
   // New task form
   const [taskName, setTaskName] = useState('');
@@ -77,6 +82,10 @@ export default function ProjectDetail({ projectId, onBack }: Props) {
         <button className="btn-secondary" onClick={onBack}>← Back to Projects List</button>
       </div>
     );
+  }
+
+  if (p.ongoing) {
+    return <OngoingProjectDetail projectId={projectId} onBack={onBack} />;
   }
 
   // Live figures from recorded payments, invoices and expenses for this project
@@ -583,7 +592,12 @@ export default function ProjectDetail({ projectId, onBack }: Props) {
                 </tbody>
               </table>
 
-              <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1A1F36', marginBottom: 8 }}>Payments ({projectPayments.length})</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1A1F36' }}>Payments ({projectPayments.length})</div>
+                <button className="btn-primary" style={{ fontSize: 12.5, padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }} onClick={() => setPaymentModal({ open: true })}>
+                  <Plus size={14} /> Record Payment
+                </button>
+              </div>
               <table className="table-base" style={{ marginBottom: 20 }}>
                 <thead>
                   <tr>
@@ -593,6 +607,7 @@ export default function ProjectDetail({ projectId, onBack }: Props) {
                     <th>METHOD</th>
                     <th style={{ textAlign: 'right' }}>AMOUNT</th>
                     <th>STATUS</th>
+                    <th style={{ textAlign: 'center' }}>ACTION</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -607,11 +622,37 @@ export default function ProjectDetail({ projectId, onBack }: Props) {
                         <td>
                           <span className={`badge ${pm.status === 'Confirmed' ? 'badge-green' : pm.status === 'Pending' ? 'badge-amber' : 'badge-red'}`}>{pm.status}</span>
                         </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <div style={{ display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+                            <button
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569' }}
+                              title="Edit Payment"
+                              onClick={() => setPaymentModal({ open: true, payment: pm })}
+                            >
+                              <Pencil size={15} />
+                            </button>
+                            <button
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444' }}
+                              title="Delete Payment"
+                              onClick={async () => {
+                                if (!pm.id || !confirm(`Delete payment ${pm.paymentNumber || pm.id}?`)) return;
+                                try {
+                                  await deletePayment(pm.id);
+                                  showToast('Payment deleted.', 'info');
+                                } catch (err: any) {
+                                  showToast(err?.message || 'Could not delete payment.', 'error');
+                                }
+                              }}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', color: '#697586', padding: '20px' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', color: '#697586', padding: '20px' }}>
                         No payments recorded for this project yet.
                       </td>
                     </tr>
@@ -831,6 +872,15 @@ export default function ProjectDetail({ projectId, onBack }: Props) {
             </form>
           </div>
         </div>
+      )}
+
+      {paymentModal.open && (
+        <PaymentModal
+          project={p}
+          payment={paymentModal.payment}
+          suggested={paymentModal.payment ? undefined : pendingAmount}
+          onClose={() => setPaymentModal({ open: false })}
+        />
       )}
     </div>
   );

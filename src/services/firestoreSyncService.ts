@@ -16,213 +16,125 @@ export function initFirestoreSync(): () => void {
   }
   isInitialized = true;
 
+async function syncTableAtomic(table: any, docs: any[]): Promise<void> {
+  await safeOpenDatabase();
+  await db.transaction('rw', table, async () => {
+    await table.clear();
+    if (docs.length > 0) await table.bulkPut(docs);
+  });
+}
+
   const collectionsToSync: Array<{ firestoreCol: string; syncToDexie: (docs: any[]) => Promise<void> }> = [
     {
       firestoreCol: 'clients',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.clients.clear();
-        if (docs.length > 0) await db.clients.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.clients, docs),
     },
     {
       firestoreCol: 'projects',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.projects.clear();
-        if (docs.length > 0) await db.projects.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.projects, docs),
     },
     {
       firestoreCol: 'invoices',
       syncToDexie: async (docs) => {
-        await safeOpenDatabase();
         const correctedDocs = await Promise.all(
           docs.map(async (d) => {
             return await autoCorrectInvoiceStatus(d);
           })
         );
-        await db.invoices.clear();
-        if (correctedDocs.length > 0) await db.invoices.bulkPut(correctedDocs);
+        await syncTableAtomic(db.invoices, correctedDocs);
       },
     },
     {
       firestoreCol: 'payments',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.payments.clear();
-        if (docs.length > 0) await db.payments.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.payments, docs),
     },
     {
       firestoreCol: 'expenses',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.expenses.clear();
-        if (docs.length > 0) await db.expenses.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.expenses, docs),
     },
     {
       firestoreCol: 'tasks',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.tasks.clear();
-        if (docs.length > 0) await db.tasks.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.tasks, docs),
     },
     {
       firestoreCol: 'employees',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.employees.clear();
-        if (docs.length > 0) await db.employees.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.employees, docs),
     },
     {
       firestoreCol: 'attendance',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.attendance.clear();
-        if (docs.length > 0) await db.attendance.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.attendance, docs),
     },
     {
       firestoreCol: 'quotations',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.quotations.clear();
-        if (docs.length > 0) await db.quotations.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.quotations, docs),
     },
     {
       firestoreCol: 'leads',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.leads.clear();
-        if (docs.length > 0) await db.leads.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.leads, docs),
     },
     {
       firestoreCol: 'services',
       syncToDexie: async (docs) => {
-        await safeOpenDatabase();
         if (docs.length > 0) {
-          await db.services.clear();
-          await db.services.bulkPut(docs);
+          await syncTableAtomic(db.services, docs);
         }
       },
     },
     {
       firestoreCol: 'projectActivity',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.projectActivity.clear();
-        if (docs.length > 0) await db.projectActivity.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.projectActivity, docs),
     },
     {
       firestoreCol: 'projectMilestones',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.projectMilestones.clear();
-        if (docs.length > 0) await db.projectMilestones.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.projectMilestones, docs),
     },
     {
       firestoreCol: 'projectFiles',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.projectFiles.clear();
-        if (docs.length > 0) await db.projectFiles.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.projectFiles, docs),
     },
     {
       firestoreCol: 'deliverables',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.deliverables.clear();
-        if (docs.length > 0) await db.deliverables.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.deliverables, docs),
     },
     {
       firestoreCol: 'leaveRequests',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.leaveRequests.clear();
-        if (docs.length > 0) await db.leaveRequests.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.leaveRequests, docs),
     },
     {
       firestoreCol: 'payroll',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.payroll.clear();
-        if (docs.length > 0) await db.payroll.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.payroll, docs),
     },
     {
       firestoreCol: 'payrollAdjustments',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.payrollAdjustments.clear();
-        if (docs.length > 0) await db.payrollAdjustments.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.payrollAdjustments, docs),
     },
     {
       firestoreCol: 'timesheets',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.timesheets.clear();
-        if (docs.length > 0) await db.timesheets.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.timesheets, docs),
     },
     {
       firestoreCol: 'assets',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.assets.clear();
-        if (docs.length > 0) await db.assets.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.assets, docs),
     },
     {
       firestoreCol: 'documents',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.documents.clear();
-        if (docs.length > 0) await db.documents.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.documents, docs),
     },
     {
       firestoreCol: 'rolePermissions',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.rolePermissions.clear();
-        if (docs.length > 0) await db.rolePermissions.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.rolePermissions, docs),
     },
     {
       firestoreCol: 'users',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.users.clear();
-        if (docs.length > 0) await db.users.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.users, docs),
     },
     {
       firestoreCol: 'billingSettings',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.billingSettings.clear();
-        if (docs.length > 0) await db.billingSettings.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.billingSettings, docs),
     },
     {
       firestoreCol: 'notificationSettings',
-      syncToDexie: async (docs) => {
-        await safeOpenDatabase();
-        await db.notificationSettings.clear();
-        if (docs.length > 0) await db.notificationSettings.bulkPut(docs);
-      },
+      syncToDexie: (docs) => syncTableAtomic(db.notificationSettings, docs),
     },
   ];
 

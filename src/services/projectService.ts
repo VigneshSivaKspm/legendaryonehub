@@ -70,6 +70,11 @@ export async function getProjectById(id: string | number): Promise<Project | und
   }
 }
 
+/** Firestore rejects undefined values; optional form fields (opening amount, rates…) are left out instead. */
+function withoutUndefined<T extends Record<string, any>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}
+
 export async function addProject(projectData: Omit<Project, 'id'>): Promise<string> {
   const val = Number(projectData.value) || 0;
   const rec = Number(projectData.received) || 0;
@@ -79,7 +84,7 @@ export async function addProject(projectData: Omit<Project, 'id'>): Promise<stri
   const now = new Date().toISOString();
 
   const progress = Math.min(100, Math.max(0, Number(projectData.progress) || 0));
-  const newProjectData = {
+  const newProjectData = withoutUndefined({
     ...projectData,
     deadline: resolveEndDate({ progress, status: projectData.status }),
     value: val,
@@ -91,7 +96,7 @@ export async function addProject(projectData: Omit<Project, 'id'>): Promise<stri
     status: projectData.status || 'In Progress',
     createdAt: now,
     updatedAt: now,
-  };
+  });
 
   const docRef = await addDoc(collection(dbFirestore, PROJECTS_COL), newProjectData);
   const fullProject: Project = { ...newProjectData, id: docRef.id };
@@ -137,8 +142,9 @@ export async function updateProject(id: string | number, updates: Partial<Projec
     updatedAt: now,
   };
 
-  await updateDoc(docRef, payload as any);
-  await db.projects.update(id as any, payload);
+  const clean = withoutUndefined(payload as Record<string, any>);
+  await updateDoc(docRef, clean);
+  await db.projects.update(id as any, clean);
 }
 
 /**

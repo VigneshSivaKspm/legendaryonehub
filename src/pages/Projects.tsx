@@ -17,6 +17,8 @@ import { ONGOING_SERVICES, LEGACY_SERVICE_MAP } from '../utils/serviceCatalog';
 
 interface Props {
   onViewProject: (id: number | string) => void;
+  /** Open an ongoing project's own page */
+  onViewOngoing?: (id: number | string) => void;
 }
 
 const statusColors: Record<string, string> = {
@@ -70,7 +72,7 @@ const initialFormState: Omit<Project, 'id'> = {
   itemRates: {},
 };
 
-export default function Projects({ onViewProject }: Props) {
+export default function Projects({ onViewProject, onViewOngoing }: Props) {
   const { showToast } = useToast();
   const { user } = useAuth();
 
@@ -195,6 +197,7 @@ export default function Projects({ onViewProject }: Props) {
       ongoing: !!project.ongoing,
       monthlyRetainer: project.monthlyRetainer || 0,
       itemRates: project.itemRates || {},
+      openingAmount: project.openingAmount,
     });
     setFormErrors({});
   };
@@ -269,7 +272,14 @@ export default function Projects({ onViewProject }: Props) {
 
     setIsSubmitting(true);
     try {
-      await updateProject(editingProject.id, formData);
+      // Switching a fixed project to ongoing keeps its agreed value as the opening amount, so earlier work and
+      // payments stay on the statement instead of the value being replaced by "billed so far"
+      const becameOngoing = !editingProject.ongoing && formData.ongoing;
+      const payload =
+        becameOngoing && formData.openingAmount === undefined && Number(editingProject.value) > 0
+          ? { ...formData, openingAmount: Number(editingProject.value) }
+          : formData;
+      await updateProject(editingProject.id, payload);
       showToast(`Project "${formData.name}" updated successfully!`, 'success');
       setEditingProject(null);
     } catch (err) {
@@ -547,7 +557,7 @@ export default function Projects({ onViewProject }: Props) {
             deliverables={deliverables}
             payments={payments}
             invoices={invoices}
-            onEdit={handleOpenEdit}
+            onOpen={(p) => p.id !== undefined && (onViewOngoing || onViewProject)(p.id)}
           />
         )}
 

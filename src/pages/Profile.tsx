@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { sendFirebasePasswordReset } from '../services/authService';
 import { useInstallPrompt } from '../pwa';
+import InstallAppButton from '../components/InstallApp';
 import { computeMonthPay, formatRate } from '../utils/salary';
 import { formatTime12h, formatLunch, formatDuration, isDueOn, isTaskDone, toLocalDate } from '../utils/attendanceTimes';
 import {
@@ -20,7 +21,6 @@ import {
   Plane,
   Wallet,
   KeyRound,
-  Download,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -147,13 +147,6 @@ export default function Profile({ employeeId, onNav, onBack }: Props) {
       showToast(err?.message || 'Could not send the reset email.', 'error');
     } finally {
       setSending(false);
-    }
-  };
-
-  const handleInstall = async () => {
-    if (installer.canInstall) {
-      const ok = await installer.install();
-      if (ok) showToast('Legendary One is being installed on this device.', 'success');
     }
   };
 
@@ -341,19 +334,7 @@ export default function Profile({ employeeId, onNav, onBack }: Props) {
             <button className="profile-action" onClick={handleReset} disabled={sending}>
               <KeyRound size={18} /> {sending ? 'Sending…' : 'Change Password'}
             </button>
-            {installer.canInstall && (
-              <button className="profile-action profile-action-primary" onClick={handleInstall}>
-                <Download size={18} /> Install App
-              </button>
-            )}
-            {installer.needsIOSHelp && (
-              <div className="profile-action" style={{ cursor: 'default' }}>
-                <Smartphone size={18} />
-                <span style={{ fontSize: 12.5, lineHeight: 1.4 }}>
-                  To install: tap <strong>Share</strong> then <strong>Add to Home Screen</strong>
-                </span>
-              </div>
-            )}
+            <InstallAppButton className="profile-action profile-action-primary" label={installer.desktop ? 'Install as Windows App' : 'Install App'} />
             {installer.installed && (
               <div className="profile-action" style={{ cursor: 'default', color: '#12B76A' }}>
                 <Smartphone size={18} /> Installed app

@@ -115,3 +115,39 @@ export async function deletePayment(id: string | number): Promise<void> {
     await syncProjectFinancials(projectId);
   }
 }
+
+/**
+ * Edit a payment (amount, date, method, reference, status, notes).
+ * Keeps a linked invoice's paid amount right and re-syncs the project's received total.
+ */
+export async function updatePayment(id: string | number, updates: Partial<Payment>): Promise<void> {
+  const existing = await db.payments.get(id as any);
+  const payload: Record<string, any> = {};
+  Object.entries({ ...updates, updatedAt: new Date().toISOString() }).forEach(([k, v]) => {
+    if (v !== undefined) payload[k] = k === 'amount' ? Number(v) || 0 : v;
+  });
+
+  await updateDoc(doc(dbFirestore, COLLECTION_NAME, String(id)), payload);
+  await db.payments.update(id as any, payload);
+
+  if (existing?.invoiceId !== undefined) {
+    try {
+      const inv = await db.invoices.get(existing.invoiceId as any);
+      if (inv?.id !== undefined) {
+        const before = existing.status === 'Confirmed' ? Number(existing.amount) || 0 : 0;
+        const nextStatus = payload.status ?? existing.status;
+        const nextAmount = payload.amount ?? existing.amount;
+        const after = nextStatus === 'Confirmed' ? Number(nextAmount) || 0 : 0;
+        if (after !== before) await updateInvoice(inv.id, { paidAmount: Math.max(0, (inv.paidAmount || 0) - before + after) });
+      }
+    } catch (e) {
+      console.warn('[PaymentService] Invoice balance update on edit warning:', e);
+    }
+  }
+
+  let projectId = existing?.projectId;
+  if (projectId === undefined && existing?.invoiceId !== undefined) {
+    projectId = (await db.invoices.get(existing.invoiceId as any))?.projectId;
+  }
+  await syncProjectFinancials(projectId);
+}

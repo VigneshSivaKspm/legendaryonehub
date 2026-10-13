@@ -28,10 +28,12 @@ import Leave from './pages/Leave';
 import Payroll from './pages/Payroll';
 import Assets from './pages/Assets';
 import Documents from './pages/Documents';
-import MyWorkspace, { type WorkspaceTab } from './pages/MyWorkspace';
+import MyWorkspace, { type WorkspaceView } from './pages/MyWorkspace';
 import MyAttendance from './pages/MyAttendance';
 import EmployeeExpenses from './pages/EmployeeExpenses';
 import Profile from './pages/Profile';
+import OngoingProjectDetail from './pages/OngoingProjectDetail';
+import { ensureScheduledTasks } from './services/ongoingWorkService';
 import logo from './assets/legendary-one-logo.png';
 
 type AppScreen =
@@ -39,7 +41,9 @@ type AppScreen =
   | 'projects' | 'project-detail' | 'tasks' | 'deliverables'
   | 'quotations' | 'invoices' | 'payments' | 'expenses'
   | 'employees' | 'attendance' | 'timesheets' | 'leave' | 'payroll'
-  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses' | 'profile' | 'employee-profile';
+  | 'services' | 'assets' | 'documents' | 'reports' | 'settings' | 'my-workspace' | 'my-attendance' | 'employee-expenses' | 'profile' | 'employee-profile' | 'ongoing-detail'
+  // Employee pages, each its own screen
+  | 'ws:today' | 'ws:tasks' | 'ws:leave' | 'ws:salary';
 
 function MainApp() {
   const {
@@ -50,13 +54,29 @@ function MainApp() {
     canAccessScreen,
     user,
     isSelfService,
+    myEmployee,
   } = useAuth();
   const [screen, setScreen] = useState<AppScreen>('dashboard');
   const [selectedClientId, setSelectedClientId] = useState<number | string>('');
   const [selectedProjectId, setSelectedProjectId] = useState<number | string>('');
   // Tab to open My Workspace on; `n` remounts it so the same tab can be requested again
-  const [workspaceTab, setWorkspaceTab] = useState<{ tab: WorkspaceTab; n: number }>({ tab: 'overview', n: 0 });
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<number | string>('');
+
+  // Posting schedules (e.g. a reel every day at 9 AM & 6 PM) become tasks. No server, so whoever is signed in
+  // creates the missing ones: employees only their own, admins everyone's. Re-checked so new days roll over.
+  const scheduleOwner = isSelfService ? myEmployee?.id : undefined;
+  useEffect(() => {
+    if (!isAuthenticated || !isCompanySetupCompleted) return;
+    if (isSelfService && scheduleOwner === undefined) return;
+    const run = () =>
+      ensureScheduledTasks(isSelfService ? { employeeId: scheduleOwner } : {}).catch((err) => console.warn('[Schedules] Task generation failed:', err));
+    const first = setTimeout(run, 4000); // give the first Firestore sync a moment
+    const timer = setInterval(run, 10 * 60 * 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, [isAuthenticated, isCompanySetupCompleted, isSelfService, scheduleOwner]);
 
   // Screens live in browser history so the browser / Android back button moves between them
   useEffect(() => {
@@ -111,30 +131,10 @@ function MainApp() {
   };
   const nav = (s: string) => {
     if (s === 'login') return;
-    // ws:<tab> shortcuts navigate to MyWorkspace with a specific tab open
-    if (s.startsWith('ws:')) {
-      const tab = s.slice(3) as WorkspaceTab;
-      setWorkspaceTab((w) => ({ tab, n: w.n + 1 }));
-      go(isSelfService ? 'dashboard' : 'my-workspace');
-      return;
-    }
-    if (s === 'dashboard' && isSelfService) {
-      setWorkspaceTab((w) => ({ tab: 'overview', n: w.n + 1 }));
-      go('dashboard');
-      return;
-    }
-    setWorkspaceTab((w) => ({ tab: 'overview', n: w.n + 1 }));
     go(s as AppScreen);
   };
-  const workspaceScreen: AppScreen = isSelfService ? 'dashboard' : 'my-workspace';
-  const workspace = (
-    <MyWorkspace
-      key={workspaceTab.n}
-      initialTab={workspaceTab.tab}
-      onTabChange={(t) => setWorkspaceTab((w) => ({ ...w, tab: t }))}
-      onOpenAttendance={() => go('my-attendance')}
-    />
-  );
+  /** Employee pages: overview on the dashboard, and Today's Tasks / All Tasks / Leave / Salary as their own screens */
+  const workspacePage = (view: WorkspaceView) => <MyWorkspace key={view} view={view} onNav={nav} />;
 
   const renderScreen = () => {
     if (!canAccessScreen(screen)) {
@@ -155,19 +155,24 @@ function MainApp() {
     }
     switch (screen) {
       case 'my-workspace':
-        return workspace;
+        return workspacePage('overview');
+      case 'ws:today':
+        return workspacePage('today');
+      case 'ws:tasks':
+        return workspacePage('tasks');
+      case 'ws:leave':
+        return workspacePage('leave');
+      case 'ws:salary':
+        return workspacePage('salary');
       case 'my-attendance':
         return (
           <MyAttendance
-            onOpenTodayTasks={() => {
-              setWorkspaceTab((w) => ({ tab: 'today', n: w.n + 1 }));
-              go(workspaceScreen);
-            }}
+            onOpenTodayTasks={() => go('ws:today')}
           />
         );
       case 'dashboard':
         // Employees land on their personal dashboard
-        if (isSelfService) return workspace;
+        if (isSelfService) return workspacePage('overview');
         return (
           <Dashboard
             onNav={nav}
@@ -194,7 +199,14 @@ function MainApp() {
           />
         );
       case 'projects':
-        return <Projects onViewProject={(id) => { setSelectedProjectId(id); go('project-detail', { projectId: id }); }} />;
+        return (
+          <Projects
+            onViewProject={(id) => { setSelectedProjectId(id); go('project-detail', { projectId: id }); }}
+            onViewOngoing={(id) => { setSelectedProjectId(id); go('ongoing-detail', { projectId: id }); }}
+          />
+        );
+      case 'ongoing-detail':
+        return <OngoingProjectDetail projectId={selectedProjectId} onBack={() => go('projects')} />;
       case 'project-detail':
         return <ProjectDetail projectId={selectedProjectId} onBack={() => go('projects')} />;
       case 'services':
@@ -247,13 +259,8 @@ function MainApp() {
     }
   };
 
-  const currentNav =
-    isSelfService && screen === 'dashboard' && workspaceTab.tab !== 'overview'
-      ? `ws:${workspaceTab.tab}`
-      : screen;
-
   return (
-    <Layout current={currentNav} onNav={nav}>
+    <Layout current={screen} onNav={nav}>
       {renderScreen()}
     </Layout>
   );

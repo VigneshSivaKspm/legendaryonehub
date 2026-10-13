@@ -2,9 +2,9 @@ import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Payment } from '../db/database';
 import { newestFirst } from '../utils/sort';
-import { addPayment, deletePayment } from '../services/paymentService';
+import { addPayment, updatePayment, deletePayment } from '../services/paymentService';
 import { useToast } from '../context/ToastContext';
-import { Trash2 } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { belongsToClient, clientLabel } from '../utils/financials';
 
 const methodColors: Record<string, string> = {
@@ -21,6 +21,13 @@ const statusColors: Record<string, string> = {
   Failed: 'badge-red',
 };
 
+const toIsoDate = (d?: string) => {
+  const v = (d || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(v)) return v.split('/').reverse().join('-');
+  return new Date().toISOString().split('T')[0];
+};
+
 export default function Payments() {
   const { showToast } = useToast();
 
@@ -32,10 +39,11 @@ export default function Payments() {
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | number | null>(null);
 
-  // Form states for new payment
+  // Form states for new / edited payment
   const [clientName, setClientName] = useState('');
   const [invoiceId, setInvoiceId] = useState<string | number>('');
   const [projectId, setProjectId] = useState('');
@@ -43,7 +51,8 @@ export default function Payments() {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [method, setMethod] = useState('UPI');
   const [referenceNumber, setReferenceNumber] = useState('');
-  const [status, setStatus] = useState<'Confirmed' | 'Pending'>('Confirmed');
+  const [status, setStatus] = useState<Payment['status']>('Confirmed');
+  const [notes, setNotes] = useState('');
 
   // Live query from Dexie cache (synchronized real-time with Firestore)
   const payments = useLiveQuery(async () => newestFirst(await db.payments.toArray(), (p) => p.date), []) || [];
@@ -194,6 +203,7 @@ export default function Payments() {
 
   // Handle Form Reset
   const resetForm = () => {
+    setEditingPayment(null);
     setClientName('');
     setInvoiceId('');
     setProjectId('');
@@ -202,9 +212,24 @@ export default function Payments() {
     setMethod('UPI');
     setReferenceNumber('');
     setStatus('Confirmed');
+    setNotes('');
   };
 
-  // Record Payment Submit Handler
+  const openEditPayment = (p: Payment) => {
+    setEditingPayment(p);
+    setClientName(p.clientName || '');
+    setInvoiceId(p.invoiceId !== undefined ? String(p.invoiceId) : '');
+    setProjectId(p.projectId !== undefined ? String(p.projectId) : '');
+    setAmount(String(p.amount ?? ''));
+    setDate(toIsoDate(p.date));
+    setMethod(p.method || 'UPI');
+    setReferenceNumber(p.referenceNumber || '');
+    setStatus(p.status || 'Confirmed');
+    setNotes(p.notes || '');
+    setShowAddModal(true);
+  };
+
+  // Record / Edit Payment Submit Handler
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientName.trim()) {
@@ -221,52 +246,67 @@ export default function Payments() {
     try {
       const selectedClientObj = clients.find((c) => c.name.toLowerCase() === clientName.trim().toLowerCase());
       const selectedInv = invoices.find((i) => String(i.id) === String(invoiceId));
-      const payNum = `PAY-${Date.now().toString().slice(-6)}`;
-
-      const paymentPayload: Omit<Payment, 'id'> = {
-        paymentNumber: payNum,
-        clientName: clientName.trim(),
-        amount: numAmount,
-        date: date || new Date().toISOString().split('T')[0],
-        method,
-        status,
-      };
-
       const resolvedClientId = selectedClientObj?.id || selectedInv?.clientId;
-      if (resolvedClientId !== undefined && resolvedClientId !== null && resolvedClientId !== '') {
-        paymentPayload.clientId = resolvedClientId;
-      }
-
-      if (selectedInv?.invoiceNumber) {
-        paymentPayload.invoiceNumber = selectedInv.invoiceNumber;
-      }
-
-      if (selectedInv?.id !== undefined && selectedInv?.id !== null && selectedInv?.id !== '') {
-        paymentPayload.invoiceId = selectedInv.id;
-      }
-
       const resolvedProject =
         projects.find((p) => String(p.id) === projectId) ||
         projects.find((p) => selectedInv?.projectId !== undefined && String(p.id) === String(selectedInv.projectId));
-      if (resolvedProject?.id !== undefined) {
-        paymentPayload.projectId = resolvedProject.id;
-        paymentPayload.projectName = resolvedProject.name;
-      } else if (selectedInv?.projectName) {
-        paymentPayload.projectName = selectedInv.projectName;
+
+      if (editingPayment?.id !== undefined) {
+        await updatePayment(editingPayment.id, {
+          clientName: clientName.trim(),
+          clientId: resolvedClientId ?? editingPayment.clientId,
+          invoiceId: selectedInv?.id ?? (invoiceId === '' ? '' : editingPayment.invoiceId),
+          invoiceNumber: selectedInv?.invoiceNumber ?? (invoiceId === '' ? '' : editingPayment.invoiceNumber),
+          projectId: resolvedProject?.id ?? (projectId === '' ? '' : editingPayment.projectId),
+          projectName: resolvedProject?.name ?? selectedInv?.projectName ?? (projectId === '' ? '' : editingPayment.projectName),
+          amount: numAmount,
+          date: date || new Date().toISOString().split('T')[0],
+          method,
+          referenceNumber: referenceNumber.trim(),
+          status,
+          notes: notes.trim(),
+        });
+        showToast(`Payment ${editingPayment.paymentNumber || editingPayment.id} updated.`, 'success');
+      } else {
+        const payNum = `PAY-${Date.now().toString().slice(-6)}`;
+        const paymentPayload: Omit<Payment, 'id'> = {
+          paymentNumber: payNum,
+          clientName: clientName.trim(),
+          amount: numAmount,
+          date: date || new Date().toISOString().split('T')[0],
+          method,
+          status,
+        };
+        if (resolvedClientId !== undefined && resolvedClientId !== null && resolvedClientId !== '') {
+          paymentPayload.clientId = resolvedClientId;
+        }
+        if (selectedInv?.invoiceNumber) {
+          paymentPayload.invoiceNumber = selectedInv.invoiceNumber;
+        }
+        if (selectedInv?.id !== undefined && selectedInv?.id !== null && selectedInv?.id !== '') {
+          paymentPayload.invoiceId = selectedInv.id;
+        }
+        if (resolvedProject?.id !== undefined) {
+          paymentPayload.projectId = resolvedProject.id;
+          paymentPayload.projectName = resolvedProject.name;
+        } else if (selectedInv?.projectName) {
+          paymentPayload.projectName = selectedInv.projectName;
+        }
+        if (referenceNumber.trim()) {
+          paymentPayload.referenceNumber = referenceNumber.trim();
+        }
+        if (notes.trim()) {
+          paymentPayload.notes = notes.trim();
+        }
+        await addPayment(paymentPayload);
+        showToast(`Payment ${payNum} recorded successfully!`, 'success');
       }
 
-      if (referenceNumber.trim()) {
-        paymentPayload.referenceNumber = referenceNumber.trim();
-      }
-
-      await addPayment(paymentPayload);
-
-      showToast(`Payment ${payNum} recorded successfully!`, 'success');
       resetForm();
       setShowAddModal(false);
     } catch (err: any) {
-      console.error('Failed to record payment:', err);
-      showToast(err?.message || 'Failed to record payment.', 'error');
+      console.error('Failed to save payment:', err);
+      showToast(err?.message || 'Failed to save payment.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -336,7 +376,7 @@ export default function Payments() {
           <button className="btn-secondary" style={{ fontSize: 13 }} onClick={handleExportCSV}>
             ⬇ Export
           </button>
-          <button className="btn-primary" onClick={() => setShowAddModal(true)}>
+          <button className="btn-primary" onClick={() => { resetForm(); setShowAddModal(true); }}>
             + Record Payment
           </button>
         </div>
@@ -490,21 +530,36 @@ export default function Payments() {
                         <span className={`badge ${statusColors[p.status] || 'badge-green'}`}>{p.status || 'Confirmed'}</span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <button
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: '#EF4444',
-                            fontSize: 14,
-                            opacity: deletingId === p.id ? 0.4 : 1,
-                          }}
-                          disabled={deletingId === p.id}
-                          title="Delete Payment"
-                          onClick={() => handleDeletePayment(p)}
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+                          <button
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              color: '#475569',
+                              fontSize: 14,
+                            }}
+                            title="Edit Payment"
+                            onClick={() => openEditPayment(p)}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          <button
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              color: '#EF4444',
+                              fontSize: 14,
+                              opacity: deletingId === p.id ? 0.4 : 1,
+                            }}
+                            disabled={deletingId === p.id}
+                            title="Delete Payment"
+                            onClick={() => handleDeletePayment(p)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -559,7 +614,7 @@ export default function Payments() {
         </div>
       </div>
 
-      {/* Record Payment Modal */}
+      {/* Record / Edit Payment Modal */}
       {showAddModal && (
         <div
           style={{
@@ -574,7 +629,10 @@ export default function Payments() {
             padding: 16,
           }}
           onClick={(e) => {
-            if (e.target === e.currentTarget) setShowAddModal(false);
+            if (e.target === e.currentTarget) {
+              resetForm();
+              setShowAddModal(false);
+            }
           }}
         >
           <div
@@ -590,11 +648,14 @@ export default function Payments() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderBottom: '1px solid #E2E8F0', paddingBottom: 12 }}>
               <div style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 700, fontSize: 18, color: '#1E293B' }}>
-                + Record Payment
+                {editingPayment ? `Edit Payment ${editingPayment.paymentNumber || ''}` : '+ Record Payment'}
               </div>
               <button
                 style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#64748B' }}
-                onClick={() => setShowAddModal(false)}
+                onClick={() => {
+                  resetForm();
+                  setShowAddModal(false);
+                }}
               >
                 ✕
               </button>
@@ -744,12 +805,27 @@ export default function Payments() {
                     className="select-base"
                     style={{ width: '100%' }}
                     value={status}
-                    onChange={(e) => setStatus(e.target.value as 'Confirmed' | 'Pending')}
+                    onChange={(e) => setStatus(e.target.value as Payment['status'])}
                   >
                     <option value="Confirmed">Confirmed</option>
                     <option value="Pending">Pending</option>
+                    <option value="Failed">Failed</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
+                  Notes
+                </label>
+                <input
+                  className="input-base"
+                  style={{ width: '100%' }}
+                  placeholder="Optional payment note"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
               </div>
 
               {/* Form Buttons */}
@@ -757,13 +833,16 @@ export default function Payments() {
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => {
+                    resetForm();
+                    setShowAddModal(false);
+                  }}
                   disabled={isSubmitting}
                 >
                   Cancel
                 </button>
                 <button type="submit" className="btn-primary" disabled={isSubmitting}>
-                  {isSubmitting ? 'Saving...' : 'Record Payment'}
+                  {isSubmitting ? 'Saving...' : editingPayment ? 'Save Changes' : 'Record Payment'}
                 </button>
               </div>
             </form>

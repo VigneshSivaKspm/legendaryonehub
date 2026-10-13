@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import InstallAppButton from '../components/InstallApp';
 import { validateEmail } from '../utils/validation';
 import { sendFirebasePasswordReset } from '../services/authService';
 import logo from '../assets/legendary-one-logo.png';
@@ -240,7 +241,10 @@ export default function Login({ onLogin }: Props) {
         </div>
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', marginTop: 22, color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
+        <div style={{ textAlign: 'center', marginTop: 18 }}>
+          <InstallAppButton variant="link" className="login-install-link" label="Install the app on this device" />
+        </div>
+        <div style={{ textAlign: 'center', marginTop: 12, color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
           © 2026 Legendary One. All rights reserved.
         </div>
       </div>

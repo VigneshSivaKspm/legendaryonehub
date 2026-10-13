@@ -135,9 +135,30 @@ export default function ProjectServiceFields({
               />
             </div>
           ))}
+          <div>
+            <label style={labelStyle} title="Agreed before this became an ongoing project; billed once, in the start month">
+              Opening Amount (₹)
+            </label>
+            <input
+              className="input-base"
+              type="number"
+              min="0"
+              placeholder="Earlier agreed value"
+              value={formData.openingAmount ?? ''}
+              onChange={(e) =>
+                setFormData({ ...formData, openingAmount: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0) })
+              }
+            />
+          </div>
         </div>
       )}
-      {formData.ongoing && error && <div style={{ fontSize: 11.5, color: '#EF4444', marginTop: -4 }}>{error}</div>}
+      {formData.ongoing && (
+        <div style={{ fontSize: 11.5, color: '#697586', marginTop: -4 }}>
+          Opening amount = the fixed value agreed before it became ongoing (e.g. the first batch of work). It's billed once, in the start month, so
+          earlier payments are matched against it.
+        </div>
+      )}
+      {formData.ongoing && error &&<div style={{ fontSize: 11.5, color: '#EF4444', marginTop: -4 }}>{error}</div>}
     </div>
   );
 }

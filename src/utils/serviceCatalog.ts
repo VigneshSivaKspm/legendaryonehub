@@ -1,5 +1,6 @@
 import type { Deliverable, Invoice, Payment, Project } from '../db/database';
 import { paymentsForProject } from './financials';
+import { LEDGER_ROWS } from '../data/ledgerData';
 
 /**
  * Sub-categories offered for a service. "multi" lets the user tick several; "single" is one choice.
@@ -39,6 +40,9 @@ export function itemTypesFor(p: Pick<Project, 'serviceName' | 'subServices' | 'i
     p.serviceName === 'Media Works' && p.subServices?.length ? p.subServices : DEFAULT_ITEM_TYPES[p.serviceName] || ['Item'];
   return Array.from(new Set([...base, ...Object.keys(p.itemRates || {})]));
 }
+
+/** What a posting schedule can ask for. */
+export const SCHEDULE_WORK_TYPES = ['Reel', 'Poster', 'Video', 'Post', 'Story', 'Carousel', 'Status Update', 'Ad Creative'];
 
 export function subServiceLabel(p: Pick<Project, 'subServices'>): string {
   return (p.subServices || []).join(', ');
@@ -82,6 +86,8 @@ export function monthLabel(m: string): string {
 
 export interface StatementMonth {
   month: string;
+  /** Opening amount (agreed before the project went ongoing), billed in the first month */
+  opening: number;
   retainer: number;
   items: { type: string; qty: number; amount: number }[];
   itemsTotal: number;
@@ -96,6 +102,26 @@ export interface OngoingStatement {
   billed: number;
   received: number;
   outstanding: number;
+  /** Paid more than billed so far (credit for future months) */
+  advance: number;
+  opening: number;
+  /** Assigned work not completed yet: billed once the employee finishes it */
+  inProgressValue: number;
+  inProgressItems: number;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Amount agreed before a project became ongoing. Uses the saved opening amount; for projects that came
+ * from the ledger import it falls back to the ledger budget (their value was replaced when they went ongoing).
+ */
+export function openingAmountFor(p: Project): number {
+  if (p.openingAmount !== undefined && p.openingAmount !== null) return Number(p.openingAmount) || 0;
+  // For monthly retainer ongoing projects, row.budget in the ledger was the retainer fee, not an opening debt
+  if (p.ongoing && Number(p.monthlyRetainer) > 0) return 0;
+  const row = LEDGER_ROWS.find((r) => `ledger${r.sheet}_project_${pad2(r.sno)}` === String(p.id));
+  return row ? Number(row.budget) || 0 : 0;
 }
 
 export function workFor(p: Project, deliverables: Deliverable[]): Deliverable[] {
@@ -107,14 +133,19 @@ export function workFor(p: Project, deliverables: Deliverable[]): Deliverable[] 
  * completed / cancelled / archived, plus the work logged that month at its rate, against confirmed payments.
  */
 export function ongoingStatement(p: Project, deliverables: Deliverable[], payments: Payment[], invoices: Invoice[], upTo = currentMonth()): OngoingStatement {
-  const work = workFor(p, deliverables);
+  const allWork = workFor(p, deliverables);
+  // Only finished work is billed; assigned tasks still in progress wait until they're completed
+  const work = allWork.filter((w) => w.status === 'Approved');
+  const pendingWork = allWork.filter((w) => w.status !== 'Approved');
   const pays = paymentsForProject(p, payments, invoices).filter((pm) => pm.status === 'Confirmed');
-  const startCandidates = [monthOf(p.startDate), ...work.map((w) => w.period || monthOf(w.date)), ...pays.map((pm) => monthOf(pm.date))].filter(Boolean);
-  const start = startCandidates.sort()[0] || upTo;
+  const projectStartMonth = monthOf(p.startDate);
+  const startCandidates = [projectStartMonth, ...work.map((w) => w.period || monthOf(w.date)), ...pays.map((pm) => monthOf(pm.date))].filter(Boolean);
+  const start = projectStartMonth || startCandidates.sort()[0] || upTo;
   const end = p.status === 'Completed' || p.status === 'Cancelled' || p.status === 'Archived' ? (monthOf(p.deadline) || upTo) : upTo;
 
+  const opening = openingAmountFor(p);
   let balance = 0;
-  const months = monthsFrom(start, end > upTo ? upTo : end).map((month) => {
+  const months = monthsFrom(start, end > upTo ? upTo : end).map((month, index) => {
     const monthWork = work.filter((w) => (w.period || monthOf(w.date)) === month);
     const byType = new Map<string, { qty: number; amount: number }>();
     monthWork.forEach((w) => {
@@ -126,14 +157,24 @@ export function ongoingStatement(p: Project, deliverables: Deliverable[], paymen
     const items = Array.from(byType, ([type, v]) => ({ type, ...v }));
     const itemsTotal = items.reduce((s, i) => s + i.amount, 0);
     const retainer = Number(p.monthlyRetainer) || 0;
-    const billed = retainer + itemsTotal;
+    const monthOpening = index === 0 ? opening : 0;
+    const billed = monthOpening + retainer + itemsTotal;
     const received = pays.filter((pm) => monthOf(pm.date) === month).reduce((s, pm) => s + (Number(pm.amount) || 0), 0);
     balance += billed - received;
-    return { month, retainer, items, itemsTotal, billed, received, balance };
+    return { month, opening: monthOpening, retainer, items, itemsTotal, billed, received, balance };
   });
 
   const billed = months.reduce((s, m) => s + m.billed, 0);
   // Payments dated outside the statement months still count towards what's been received
   const received = pays.reduce((s, pm) => s + (Number(pm.amount) || 0), 0);
-  return { months, billed, received, outstanding: Math.max(0, billed - received) };
+  return {
+    months,
+    billed,
+    received,
+    outstanding: Math.max(0, billed - received),
+    advance: Math.max(0, received - billed),
+    opening,
+    inProgressValue: pendingWork.reduce((s, w) => s + (Number(w.amount ?? (Number(w.qty) || 0) * (Number(w.rate) || 0)) || 0), 0),
+    inProgressItems: pendingWork.reduce((s, w) => s + (Number(w.qty) || 0), 0),
+  };
 }

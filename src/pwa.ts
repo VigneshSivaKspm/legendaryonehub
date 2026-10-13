@@ -31,6 +31,8 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 let deferredPrompt: BeforeInstallPromptEvent | null = null;
+/** Installed during this visit (the browser tab stays open; the app opens in its own window) */
+let installedThisSession = false;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
 
@@ -42,15 +44,33 @@ if (typeof window !== 'undefined') {
   });
   window.addEventListener('appinstalled', () => {
     deferredPrompt = null;
+    installedThisSession = true;
     notify();
   });
 }
 
+/** Running as the installed app (its own window on Windows/macOS, home-screen app on phones). */
 export function isStandalone(): boolean {
   return (
-    window.matchMedia?.('(display-mode: standalone)').matches ||
+    ['standalone', 'minimal-ui', 'window-controls-overlay'].some((m) => window.matchMedia?.(`(display-mode: ${m})`).matches) ||
     (navigator as Navigator & { standalone?: boolean }).standalone === true
   );
+}
+
+export type BrowserKind = 'edge' | 'chrome' | 'safari' | 'firefox' | 'samsung' | 'other';
+
+export function detectBrowser(): BrowserKind {
+  const ua = navigator.userAgent;
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/SamsungBrowser/.test(ua)) return 'samsung';
+  if (/Firefox\/|FxiOS/.test(ua)) return 'firefox';
+  if (/Chrome\/|CriOS/.test(ua)) return 'chrome';
+  if (/Safari\//.test(ua)) return 'safari';
+  return 'other';
+}
+
+export function isDesktopDevice(): boolean {
+  return !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) && !isIOS();
 }
 
 export function isIOS(): boolean {
@@ -74,6 +94,10 @@ export function useInstallPrompt() {
   const installed = isStandalone();
   return {
     installed,
+    /** Just installed from this browser tab: the app is now in the Start menu / desktop */
+    installedThisSession,
+    browser: detectBrowser(),
+    desktop: isDesktopDevice(),
     canInstall: !installed && !!deferredPrompt,
     needsIOSHelp: !installed && !deferredPrompt && isIOS(),
     install: async (): Promise<boolean> => {
