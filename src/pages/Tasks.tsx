@@ -13,6 +13,9 @@ import {
   Calendar,
   User,
   Folder,
+  Package,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
 import { db, type ProjectTask, type Project } from '../db/database';
 import { newestFirst } from '../utils/sort';
@@ -26,6 +29,13 @@ import {
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import EmployeeSelect from '../components/EmployeeSelect';
 import { useAuth } from '../context/AuthContext';
+import {
+  itemTypesFor,
+  getOngoingCategoryName,
+  getOngoingCategoryBadge,
+  ONGOING_SERVICES,
+} from '../utils/serviceCatalog';
+import { addDeliverable, updateDeliverable } from '../services/deliverableService';
 
 export default function Tasks() {
   // Employees only see and update their own tasks; creating, editing and deleting is for managers
@@ -70,6 +80,15 @@ export default function Tasks() {
   const [formStatus, setFormStatus] = useState<TaskStatus>('Pending');
   const [errors, setErrors] = useState<{ title?: string; dueDate?: string }>({});
 
+  // Matching fields for ongoing / deliverable work
+  const [includeDeliverable, setIncludeDeliverable] = useState(false);
+  const [formWorkType, setFormWorkType] = useState<string>('');
+  const [customWorkType, setCustomWorkType] = useState<string>('');
+  const [formQuantity, setFormQuantity] = useState<number>(1);
+  const [formRate, setFormRate] = useState<string>('');
+  const [formChannels, setFormChannels] = useState<string[]>([]);
+  const [formDetails, setFormDetails] = useState<string>('');
+
   const todayStr = new Date().toISOString().split('T')[0];
 
   // Helper to normalize task object fields
@@ -79,6 +98,9 @@ export default function Tasks() {
       const dueDate = t.dueDate || t.deadline || '';
       const assignedTo = t.assignedTo || t.assignee || 'Unassigned';
       const projectName = t.projectName || t.project || 'General';
+      const workType = t.workType || '';
+      const quantity = t.quantity || (t.workType ? 1 : undefined);
+      const channels = t.channels || [];
 
       let status: TaskStatus = 'Pending';
       if (t.status === 'Completed' || t.status === 'Done') {
@@ -97,11 +119,80 @@ export default function Tasks() {
         dueDate,
         assignedTo,
         projectName,
+        workType,
+        quantity,
+        channels,
         status,
         isOverdue,
       };
     });
   }, [rawTasks, todayStr]);
+
+  // Project categorization
+  const ongoingProjects = useMemo(() => {
+    return projects.filter((p) => p.ongoing || ONGOING_SERVICES.has(p.serviceName));
+  }, [projects]);
+
+  const regularProjects = useMemo(() => {
+    return projects.filter((p) => !p.ongoing && !ONGOING_SERVICES.has(p.serviceName));
+  }, [projects]);
+
+  const selectedProject = useMemo(() => {
+    return projects.find((p) => String(p.id) === String(formProjectId));
+  }, [projects, formProjectId]);
+
+  const deliverableTypes = useMemo(() => {
+    if (!selectedProject) return ['Posters', 'Video', 'Reel', 'Post', 'Story', 'Carousel', 'PDF', 'Audio', 'Campaign', 'Task'];
+    return itemTypesFor(selectedProject);
+  }, [selectedProject]);
+
+  const isMarketingOrMedia = useMemo(() => {
+    if (!selectedProject) return true;
+    return (
+      selectedProject.serviceName === 'Organic Marketing' ||
+      selectedProject.serviceName === 'Digital Marketing' ||
+      selectedProject.serviceName === 'Media Works' ||
+      (selectedProject.subServices || []).length > 0
+    );
+  }, [selectedProject]);
+
+  const handleProjectChange = (newProjId: string) => {
+    setFormProjectId(newProjId);
+    const proj = projects.find((p) => String(p.id) === String(newProjId));
+    if (proj) {
+      const types = itemTypesFor(proj);
+      if (types.length > 0 && !formWorkType) {
+        setFormWorkType(types[0]);
+        if (proj.itemRates?.[types[0]]) {
+          setFormRate(String(proj.itemRates[types[0]]));
+        }
+      }
+      if (formChannels.length === 0 && proj.subServices && proj.subServices.length > 0) {
+        const potentialChannels = ['Facebook', 'Instagram', 'WhatsApp', 'Google Business Profile'];
+        const matched = proj.subServices.filter((s) => potentialChannels.includes(s));
+        if (matched.length > 0) setFormChannels(matched);
+      }
+    }
+  };
+
+  const handleAutoFillTitle = () => {
+    const effectiveType = formWorkType === '__custom' ? customWorkType.trim() : formWorkType.trim();
+    const qty = Number(formQuantity) || 1;
+    const parts: string[] = [];
+    if (effectiveType) {
+      parts.push(`${qty > 1 ? `${qty} × ` : ''}${effectiveType}`);
+    }
+    if (formDetails.trim()) {
+      parts.push(formDetails.trim());
+    } else if (selectedProject) {
+      parts.push(selectedProject.name);
+    }
+    const generated = parts.join(' · ');
+    if (generated) {
+      setFormTitle(generated);
+      if (errors.title) setErrors((prev) => ({ ...prev, title: undefined }));
+    }
+  };
 
   // Overall Statistics
   const stats = useMemo(() => {
@@ -124,7 +215,9 @@ export default function Tasks() {
         const matchesDesc = (t.description || '').toLowerCase().includes(query);
         const matchesAssignee = (t.assignedTo || '').toLowerCase().includes(query);
         const matchesProject = (t.projectName || '').toLowerCase().includes(query);
-        if (!matchesTitle && !matchesDesc && !matchesAssignee && !matchesProject) {
+        const matchesWorkType = (t.workType || '').toLowerCase().includes(query);
+        const matchesChannels = (t.channels || []).join(' ').toLowerCase().includes(query);
+        if (!matchesTitle && !matchesDesc && !matchesAssignee && !matchesProject && !matchesWorkType && !matchesChannels) {
           return false;
         }
       }
@@ -158,6 +251,13 @@ export default function Tasks() {
     setFormDueDate(todayStr);
     setFormPriority('Medium');
     setFormStatus('Pending');
+    setIncludeDeliverable(false);
+    setFormWorkType('');
+    setCustomWorkType('');
+    setFormQuantity(1);
+    setFormRate('');
+    setFormChannels([]);
+    setFormDetails('');
     setErrors({});
     setIsModalOpen(true);
   };
@@ -172,11 +272,26 @@ export default function Tasks() {
     setFormAssignedToId(task.assignedToId);
     setFormDueDate(task.dueDate || task.deadline || todayStr);
     setFormPriority((task.priority as TaskPriority) || 'Medium');
-    
+
     let normStatus: TaskStatus = 'Pending';
     if (task.status === 'Completed' || task.status === 'Done') normStatus = 'Completed';
     else if (task.status === 'In Progress' || task.status === 'Review') normStatus = 'In Progress';
     setFormStatus(normStatus);
+
+    const hasDeliverable = Boolean(task.workType || (task.quantity && task.quantity > 1) || task.deliverableId);
+    setIncludeDeliverable(hasDeliverable);
+    setFormWorkType(task.workType || '');
+    setCustomWorkType('');
+    setFormQuantity(task.quantity || 1);
+    setFormChannels(task.channels || []);
+    setFormDetails(task.description || '');
+
+    const proj = projects.find((p) => String(p.id) === String(task.projectId));
+    if (proj && task.workType && proj.itemRates?.[task.workType]) {
+      setFormRate(String(proj.itemRates[task.workType]));
+    } else {
+      setFormRate('');
+    }
 
     setErrors({});
     setIsModalOpen(true);
@@ -201,15 +316,58 @@ export default function Tasks() {
 
     setIsSubmitting(true);
     try {
-      const selectedProject = projects.find((p) => String(p.id) === String(formProjectId));
+      const selectedProj = projects.find((p) => String(p.id) === String(formProjectId));
+      const workTypeVal = includeDeliverable
+        ? (formWorkType === '__custom' ? customWorkType.trim() : formWorkType.trim())
+        : '';
+      const qtyVal = includeDeliverable ? Math.max(1, Number(formQuantity) || 1) : 1;
+      const rateVal = includeDeliverable ? Number(formRate) || 0 : 0;
+
+      // Ongoing work billing sync (only if user checked includeDeliverable)
+      let deliverableId = editingTask?.deliverableId;
+      if (includeDeliverable && selectedProj && (selectedProj.ongoing || ONGOING_SERVICES.has(selectedProj.serviceName)) && workTypeVal) {
+        if (!deliverableId) {
+          deliverableId = await addDeliverable({
+            client: selectedProj.clientName,
+            clientId: selectedProj.clientId,
+            type: workTypeVal,
+            description: formDetails.trim() || formTitle.trim(),
+            qty: qtyVal,
+            rate: rateVal,
+            amount: qtyVal * rateVal,
+            date: formDueDate,
+            employee: formAssignedTo.trim(),
+            period: formDueDate.slice(0, 7),
+            status: formStatus === 'Completed' ? 'Approved' : 'Pending',
+            projectId: selectedProj.id,
+            projectName: selectedProj.name,
+          });
+        } else {
+          await updateDeliverable(deliverableId, {
+            type: workTypeVal,
+            description: formDetails.trim() || formTitle.trim(),
+            qty: qtyVal,
+            rate: rateVal,
+            amount: qtyVal * rateVal,
+            date: formDueDate,
+            employee: formAssignedTo.trim(),
+            status: formStatus === 'Completed' ? 'Approved' : 'Pending',
+          });
+        }
+      }
+
+      const combinedDescription = includeDeliverable && formDetails.trim()
+        ? [formDetails.trim(), formDescription.trim()].filter(Boolean).join('\n')
+        : formDescription.trim();
 
       const payload = {
         title: formTitle.trim(),
         task: formTitle.trim(),
-        description: formDescription.trim(),
+        description: combinedDescription,
         projectId: formProjectId ? (isNaN(Number(formProjectId)) ? formProjectId : Number(formProjectId)) : '',
-        projectName: selectedProject ? selectedProject.name : '',
-        project: selectedProject ? selectedProject.name : '',
+        projectName: selectedProj ? selectedProj.name : '',
+        project: selectedProj ? selectedProj.name : '',
+        client: selectedProj ? selectedProj.clientName : '',
         assignedTo: formAssignedTo.trim(),
         assignee: formAssignedTo.trim(),
         ...(formAssignedToId !== undefined ? { assignedToId: formAssignedToId } : {}),
@@ -217,12 +375,20 @@ export default function Tasks() {
         deadline: formDueDate,
         priority: formPriority,
         status: formStatus,
+        ...(includeDeliverable && workTypeVal ? { workType: workTypeVal } : {}),
+        ...(includeDeliverable ? { quantity: qtyVal } : {}),
+        ...(includeDeliverable && formChannels.length > 0 ? { channels: formChannels } : {}),
+        ...(selectedProj?.ongoing ? { source: 'ongoing' as const } : {}),
+        ...(includeDeliverable && deliverableId ? { deliverableId } : {}),
       };
 
       if (editingTask && editingTask.id) {
         await updateTask(editingTask.id, payload);
       } else {
-        await addTask(payload);
+        const newTaskId = await addTask(payload);
+        if (includeDeliverable && deliverableId) {
+          await updateDeliverable(deliverableId, { taskId: newTaskId });
+        }
       }
 
       setIsModalOpen(false);
@@ -485,8 +651,9 @@ export default function Tasks() {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13.5 }}>
               <thead>
                 <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#64748B', fontWeight: 600, fontSize: 12.5, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                  <th style={{ padding: '14px 16px' }}>Task Title</th>
-                  <th style={{ padding: '14px 16px' }}>Project</th>
+                  <th style={{ padding: '14px 16px' }}>Task Title & Brief</th>
+                  <th style={{ padding: '14px 16px' }}>Deliverable & Count</th>
+                  <th style={{ padding: '14px 16px' }}>Project & Category</th>
                   <th style={{ padding: '14px 16px' }}>Assigned To</th>
                   <th style={{ padding: '14px 16px' }}>Due Date</th>
                   <th style={{ padding: '14px 16px' }}>Priority</th>
@@ -505,7 +672,7 @@ export default function Tasks() {
                       }}
                     >
                       {/* Title & Description */}
-                      <td style={{ padding: '14px 16px', maxWidth: 300 }}>
+                      <td style={{ padding: '14px 16px', maxWidth: 280 }}>
                         <div style={{ fontWeight: 600, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span>{t.title}</span>
                           {t.isOverdue && (
@@ -529,14 +696,79 @@ export default function Tasks() {
                             {t.description}
                           </div>
                         )}
+                        {t.channels && t.channels.length > 0 && (
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                            {t.channels.map((ch) => (
+                              <span key={ch} style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0' }}>
+                                {ch}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
 
-                      {/* Project */}
+                      {/* Deliverable & Count */}
+                      <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                        {t.workType || (t.quantity && t.quantity > 1) ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: '#3730A3',
+                                background: '#EEF2FF',
+                                border: '1px solid #C7D2FE',
+                                borderRadius: 6,
+                                padding: '2px 8px',
+                              }}
+                            >
+                              📦 {t.quantity && t.quantity > 1 ? `${t.quantity} × ` : '1 × '}
+                              {t.workType || 'Item'}
+                            </span>
+                          </div>
+                        ) : (
+                          <span style={{ color: '#94A3B8', fontSize: 12 }}>—</span>
+                        )}
+                      </td>
+
+                      {/* Project & Category */}
                       <td style={{ padding: '14px 16px', color: '#475569' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Folder size={14} style={{ color: '#94A3B8' }} />
-                          <span>{t.projectName || 'General'}</span>
-                        </div>
+                        {(() => {
+                          const proj = projects.find(
+                            (p) => String(p.id) === String(t.projectId) || p.name === t.projectName
+                          );
+                          const isOngoing = proj?.ongoing || (proj && ONGOING_SERVICES.has(proj.serviceName));
+                          const badge = proj ? getOngoingCategoryBadge(proj.serviceName) : null;
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <Folder size={14} style={{ color: isOngoing ? '#7C3AED' : '#94A3B8', flexShrink: 0 }} />
+                                <span style={{ fontWeight: 600, color: '#1E293B' }}>{t.projectName || 'General'}</span>
+                              </div>
+                              {proj && (
+                                <div>
+                                  <span
+                                    style={{
+                                      fontSize: 10.5,
+                                      fontWeight: 600,
+                                      color: badge?.color || '#64748B',
+                                      background: badge?.bg || '#F8FAFC',
+                                      border: `1px solid ${badge?.border || '#E2E8F0'}`,
+                                      borderRadius: 4,
+                                      padding: '1px 6px',
+                                      display: 'inline-block',
+                                    }}
+                                  >
+                                    {isOngoing ? getOngoingCategoryName(proj.serviceName) : proj.serviceName || 'General Project'}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Assigned To */}
@@ -758,46 +990,74 @@ export default function Tasks() {
 
       {/* Add / Edit Task Modal */}
       {isModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
-        >
+        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div
+            className="modal-box"
+            onClick={(e) => e.stopPropagation()}
             style={{
-              background: '#FFFFFF',
-              borderRadius: 16,
               width: '100%',
-              maxWidth: 540,
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+              maxWidth: 600,
+              maxHeight: '92vh',
+              display: 'flex',
+              flexDirection: 'column',
               overflow: 'hidden',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
             }}
           >
             {/* Modal Header */}
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 18, fontWeight: 700, color: '#1E293B', margin: 0 }}>
-                {editingTask ? 'Edit Task' : 'Add New Task'}
-              </h2>
+            <div
+              style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid #E2E8F0',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexShrink: 0,
+                background: '#FFFFFF',
+              }}
+            >
+              <div>
+                <h2 style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 17, fontWeight: 700, color: '#1E293B', margin: 0 }}>
+                  {editingTask ? 'Edit Task' : 'Add New Task'}
+                </h2>
+                <p style={{ margin: '2px 0 0 0', fontSize: 12, color: '#64748B' }}>
+                  {selectedProject ? `${selectedProject.name} · ${getOngoingCategoryName(selectedProject.serviceName)}` : 'Create and assign a task to team members'}
+                </p>
+              </div>
               <button
+                type="button"
                 onClick={() => setIsModalOpen(false)}
-                style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', padding: 4 }}
+                style={{
+                  background: '#F1F5F9',
+                  border: 'none',
+                  borderRadius: 8,
+                  color: '#64748B',
+                  cursor: 'pointer',
+                  padding: '6px 10px',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
               >
                 ✕
               </button>
             </div>
 
             {/* Modal Body */}
-            <form onSubmit={handleSubmit} style={{ padding: '20px 24px' }}>
+            <form
+              onSubmit={handleSubmit}
+              style={{
+                padding: '18px 20px',
+                overflowY: 'auto',
+                flex: 1,
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
               {/* Task Title */}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 5 }}>
                   Task Title <span style={{ color: '#EF4444' }}>*</span>
                 </label>
                 <input
@@ -822,12 +1082,12 @@ export default function Tasks() {
               </div>
 
               {/* Description */}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 5 }}>
                   Description <span style={{ color: '#94A3B8', fontWeight: 400 }}>(Optional)</span>
                 </label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   placeholder="Add details or context for this task..."
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
@@ -844,15 +1104,15 @@ export default function Tasks() {
                 />
               </div>
 
-              {/* Linked Project & Assigned To */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+              {/* Linked Project & Assigned To (Stacked on mobile, side-by-side on tablet/desktop) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 mb-4">
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 5 }}>
                     Linked Project
                   </label>
                   <select
                     value={formProjectId}
-                    onChange={(e) => setFormProjectId(e.target.value)}
+                    onChange={(e) => handleProjectChange(e.target.value)}
                     style={{
                       width: '100%',
                       padding: '10px 14px',
@@ -865,16 +1125,29 @@ export default function Tasks() {
                     }}
                   >
                     <option value="">No Project (General)</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={String(p.id)}>
-                        {p.name}
-                      </option>
-                    ))}
+                    {ongoingProjects.length > 0 && (
+                      <optgroup label="🔁 Retainers & Recurring Services (Marketing, Media, SEO)">
+                        {ongoingProjects.map((p) => (
+                          <option key={p.id} value={String(p.id)}>
+                            {p.name} [{getOngoingCategoryName(p.serviceName)}]
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {regularProjects.length > 0 && (
+                      <optgroup label="📋 Fixed-Scope Projects (Websites, Apps, Works)">
+                        {regularProjects.map((p) => (
+                          <option key={p.id} value={String(p.id)}>
+                            {p.name} [{p.serviceName || 'Project'}]
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 5 }}>
                     Assigned To
                   </label>
                   <EmployeeSelect
@@ -898,10 +1171,292 @@ export default function Tasks() {
                 </div>
               </div>
 
-              {/* Due Date & Priority */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+              {/* ── Optional Deliverable & Counts Checkbox ── */}
+              <div style={{ marginBottom: 14 }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: includeDeliverable ? '#3730A3' : '#334155',
+                    userSelect: 'none',
+                    background: includeDeliverable ? '#EEF2FF' : '#F8FAFC',
+                    border: includeDeliverable ? '1px solid #C7D2FE' : '1px solid #E2E8F0',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={includeDeliverable}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIncludeDeliverable(checked);
+                      if (checked && !formWorkType && deliverableTypes.length > 0) {
+                        setFormWorkType(deliverableTypes[0]);
+                        if (selectedProject?.itemRates?.[deliverableTypes[0]]) {
+                          setFormRate(String(selectedProject.itemRates[deliverableTypes[0]]));
+                        }
+                      }
+                    }}
+                    style={{
+                      accentColor: '#4F46E5',
+                      width: 17,
+                      height: 17,
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span>Add Deliverable Details & Counts</span>
+                      {selectedProject && (
+                        <span
+                          style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            color: '#4338CA',
+                            background: '#E0E7FF',
+                            borderRadius: 4,
+                            padding: '1px 6px',
+                          }}
+                        >
+                          {getOngoingCategoryName(selectedProject.serviceName)}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: '#64748B', fontWeight: 400, marginTop: 2 }}>
+                      Enable to specify what to make (posters, video, reels), counts, and track billing
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              {/* ── Deliverable Details, Counts & Instructions (Shown only when checkbox is checked) ── */}
+              {includeDeliverable && (
+                <div
+                  style={{
+                    background: '#F8FAFC',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: 12,
+                    padding: '14px 16px',
+                    marginBottom: 16,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Package size={15} style={{ color: '#4F46E5' }} />
+                        <span>Deliverable Details & Counts</span>
+                      </div>
+                      {selectedProject && (
+                        <span
+                          style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            color: '#4338CA',
+                            background: '#EEF2FF',
+                            border: '1px solid #C7D2FE',
+                            borderRadius: 6,
+                            padding: '2px 8px',
+                          }}
+                        >
+                          {getOngoingCategoryName(selectedProject.serviceName)}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAutoFillTitle}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        color: '#4338CA',
+                        background: '#EEF2FF',
+                        border: '1px solid #C7D2FE',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Sparkles size={12} /> Auto-fill Title
+                    </button>
+                  </div>
+
+                  {/* Mobile: Type full-width, Count & Rate side-by-side. Desktop: 3 columns */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+                    {/* What to make / Deliverable Type */}
+                    <div className="col-span-2 sm:col-span-1">
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                        What to make / Deliverable *
+                      </label>
+                      <select
+                        value={formWorkType}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormWorkType(val);
+                          if (selectedProject?.itemRates?.[val]) {
+                            setFormRate(String(selectedProject.itemRates[val]));
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '9px 10px',
+                          borderRadius: 8,
+                          border: '1px solid #CBD5E1',
+                          fontSize: 13.5,
+                          outline: 'none',
+                          backgroundColor: '#FFFFFF',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        <option value="">Select deliverable...</option>
+                        {deliverableTypes.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                        <option value="__custom">Other (Custom)...</option>
+                      </select>
+                      {formWorkType === '__custom' && (
+                        <input
+                          placeholder="e.g. Brochure, Banner, Logo"
+                          value={customWorkType}
+                          onChange={(e) => setCustomWorkType(e.target.value)}
+                          style={{
+                            width: '100%',
+                            marginTop: 6,
+                            padding: '8px 10px',
+                            borderRadius: 8,
+                            border: '1px solid #CBD5E1',
+                            fontSize: 13,
+                            outline: 'none',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Quantity / Count */}
+                    <div className="col-span-1">
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                        Count / Quantity *
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={formQuantity}
+                        onChange={(e) => setFormQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                        style={{
+                          width: '100%',
+                          padding: '9px 10px',
+                          borderRadius: 8,
+                          border: '1px solid #CBD5E1',
+                          fontSize: 13.5,
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                      />
+                    </div>
+
+                    {/* Price each (₹) */}
+                    <div className="col-span-1">
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                        Price each (₹) <span style={{ color: '#94A3B8', fontWeight: 400 }}>(0 = retainer)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                        value={formRate}
+                        onChange={(e) => setFormRate(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '9px 10px',
+                          borderRadius: 8,
+                          border: '1px solid #CBD5E1',
+                          fontSize: 13.5,
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Channels / Platforms chips */}
+                  {isMarketingOrMedia && (
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
+                        Channels / Platforms
+                      </label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {['Facebook', 'Instagram', 'WhatsApp', 'Google Business Profile', 'YouTube', 'Website'].map((channel) => {
+                          const active = formChannels.includes(channel);
+                          return (
+                            <button
+                              key={channel}
+                              type="button"
+                              onClick={() => {
+                                setFormChannels(active ? formChannels.filter((c) => c !== channel) : [...formChannels, channel]);
+                              }}
+                              style={{
+                                padding: '5px 11px',
+                                borderRadius: 7,
+                                fontSize: 12,
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                                border: active ? '1px solid #3B5BDB' : '1px solid #CBD5E1',
+                                background: active ? '#EEF2FF' : '#FFFFFF',
+                                color: active ? '#3B5BDB' : '#475569',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {active ? '✓ ' : ''}{channel}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Specific Brief / Details for Employee */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                      Deliverable Brief / Specific Instructions for Employee
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 1080×1080 Diwali offer poster in Tamil & English, use new logo"
+                      value={formDetails}
+                      onChange={(e) => setFormDetails(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        border: '1px solid #CBD5E1',
+                        fontSize: 13.5,
+                        outline: 'none',
+                        boxSizing: 'border-box',
+                        backgroundColor: '#FFFFFF',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Due Date & Priority (Stacked on mobile, side-by-side on sm) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 mb-4">
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 5 }}>
                     Due Date <span style={{ color: '#EF4444' }}>*</span>
                   </label>
                   <input
@@ -919,13 +1474,14 @@ export default function Tasks() {
                       fontSize: 13.5,
                       outline: 'none',
                       boxSizing: 'border-box',
+                      backgroundColor: '#FFFFFF',
                     }}
                   />
                   {errors.dueDate && <span style={{ color: '#EF4444', fontSize: 12, marginTop: 4, display: 'block' }}>{errors.dueDate}</span>}
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 5 }}>
                     Priority
                   </label>
                   <select
@@ -950,8 +1506,8 @@ export default function Tasks() {
               </div>
 
               {/* Status */}
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 5 }}>
                   Status
                 </label>
                 <select
@@ -974,14 +1530,24 @@ export default function Tasks() {
                 </select>
               </div>
 
-              {/* Actions */}
-              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', paddingTop: 12, borderTop: '1px solid #F1F5F9' }}>
+              {/* Actions Footer */}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 10,
+                  justifyContent: 'flex-end',
+                  paddingTop: 14,
+                  borderTop: '1px solid #F1F5F9',
+                }}
+              >
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
                   disabled={isSubmitting}
                   style={{
-                    padding: '10px 18px',
+                    flex: '1 1 auto',
+                    maxWidth: 130,
+                    padding: '10px 16px',
                     borderRadius: 8,
                     border: '1px solid #CBD5E1',
                     background: '#FFFFFF',
@@ -989,6 +1555,7 @@ export default function Tasks() {
                     fontSize: 13.5,
                     fontWeight: 600,
                     cursor: 'pointer',
+                    textAlign: 'center',
                   }}
                 >
                   Cancel
@@ -997,6 +1564,7 @@ export default function Tasks() {
                   type="submit"
                   disabled={isSubmitting}
                   style={{
+                    flex: '2 1 auto',
                     padding: '10px 20px',
                     borderRadius: 8,
                     border: 'none',
@@ -1006,6 +1574,7 @@ export default function Tasks() {
                     fontWeight: 600,
                     cursor: isSubmitting ? 'not-allowed' : 'pointer',
                     opacity: isSubmitting ? 0.7 : 1,
+                    textAlign: 'center',
                   }}
                 >
                   {isSubmitting ? 'Saving...' : editingTask ? 'Update Task' : 'Create Task'}

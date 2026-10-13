@@ -390,7 +390,7 @@ export default function Projects({ onViewProject, onViewOngoing }: Props) {
                 color: pageTab === 'ongoing' ? '#fff' : '#697586',
               }}
             >
-              🔁 Ongoing Works ({ongoingProjects.length})
+              🔁 Retainers & Recurring Works ({ongoingProjects.length})
             </button>
             <button
               onClick={() => setPageTab('expenses')}

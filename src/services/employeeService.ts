@@ -73,8 +73,17 @@ export async function getAttendanceByDate(dateStr: string): Promise<AttendanceRe
 
 export async function recordAttendance(record: Omit<AttendanceRecord, 'id'>): Promise<string> {
   const now = new Date().toISOString();
-  const payload = { ...record, createdAt: now };
-  const docRef = await addDoc(collection(dbFirestore, ATTENDANCE_COL), payload);
-  await db.attendance.put({ ...payload, id: docRef.id });
+  const rawPayload = {
+    ...record,
+    dept: record.dept || '',
+    employeeCode: record.employeeCode || (record.employeeId ? String(record.employeeId) : ''),
+    notes: record.notes || '',
+    createdAt: now,
+  };
+  const clean = Object.fromEntries(
+    Object.entries(rawPayload).filter(([, v]) => v !== undefined)
+  );
+  const docRef = await addDoc(collection(dbFirestore, ATTENDANCE_COL), clean);
+  await db.attendance.put({ ...(clean as any), id: docRef.id });
   return docRef.id;
 }

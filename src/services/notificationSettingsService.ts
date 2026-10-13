@@ -394,7 +394,7 @@ export interface FcmTokenResult {
  * and updates token for authenticated user in Firestore /users/{uid}.
  */
 export async function requestAndStoreFcmToken(
-  currentUser?: { uid?: string; id?: string; email?: string | null }
+  currentUser?: { uid?: string; id?: string | number; email?: string | null }
 ): Promise<FcmTokenResult> {
   if (typeof window === 'undefined' || !('Notification' in window) || !('serviceWorker' in navigator)) {
     return {
@@ -444,7 +444,7 @@ export async function requestAndStoreFcmToken(
       const uid = currentUser?.uid || currentUser?.id;
       if (uid) {
         try {
-          const userRef = doc(dbFirestore, 'users', uid);
+          const userRef = doc(dbFirestore, 'users', String(uid));
           await setDoc(userRef, { fcmToken: token, fcmTokenUpdatedAt: new Date().toISOString() }, { merge: true });
         } catch (fsErr) {
           console.warn('[FCM] Could not store FCM token in Firestore /users doc:', fsErr);

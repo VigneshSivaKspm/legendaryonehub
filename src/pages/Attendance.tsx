@@ -416,14 +416,14 @@ export default function Attendance() {
         employeeId: emp.id,
         employeeCode: emp.employeeId || String(emp.id),
         employeeName: emp.name,
-        dept: emp.dept,
+        dept: emp.dept || '',
         date: singleForm.date,
         status: singleForm.status,
         // Absent / On Leave days carry no times or overtime
         checkIn: statusHasTimes(singleForm.status) ? singleForm.checkIn.trim() : '',
         checkOut: statusHasTimes(singleForm.status) ? singleForm.checkOut.trim() : '',
         overtimeHours: statusHasTimes(singleForm.status) ? Number(singleForm.overtimeHours) || 0 : 0,
-        notes: singleForm.notes.trim(),
+        notes: singleForm.notes.trim() || '',
       };
 
       if (editingRecord && editingRecord.id) {
@@ -491,13 +491,13 @@ export default function Attendance() {
             employeeId: item.employeeId,
             employeeCode: item.employeeCode,
             employeeName: item.name,
-            dept: item.dept,
+            dept: item.dept || '',
             date: selectedDate,
             status: item.status,
             checkIn: hasTimes ? item.checkIn.trim() : '',
             // Check-out is recorded at sign-off: keep an existing one, clear it only for Absent / On Leave
             ...(!hasTimes || !item.existingId ? { checkOut: '', overtimeHours: 0 } : {}),
-            notes: item.notes.trim(),
+            notes: item.notes.trim() || '',
           },
         };
       });

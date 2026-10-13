@@ -77,7 +77,7 @@ export default function Quotations() {
   const pipelineValue = useMemo(() => {
     return quotations.reduce((acc, q) => {
       const status = q.status || 'Draft';
-      if (status !== 'Declined' && status !== 'Rejected') {
+      if (status !== 'Declined' && (status as string) !== 'Rejected') {
         const val = Number(q.totalAmount ?? (q as any).total ?? q.amount) || 0;
         return acc + val;
       }

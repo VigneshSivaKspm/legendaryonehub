@@ -29,16 +29,71 @@ export const LEGACY_SERVICE_MAP: Record<string, { serviceName: string; subServic
 
 /** Work types that can be counted on an ongoing project. Media Works counts its chosen media types. */
 const DEFAULT_ITEM_TYPES: Record<string, string[]> = {
-  'Media Works': ['Video', 'Posters', 'PDF', 'Audio'],
-  'Organic Marketing': ['Post', 'Reel', 'Story'],
-  'Digital Marketing': ['Campaign', 'Ad Creative'],
-  SEO: ['Blog Article', 'Backlink'],
+  'Media Works': ['Posters', 'Video', 'PDF', 'Audio', 'Brochure', 'Banner', 'Logo'],
+  'Organic Marketing': ['Post', 'Reel', 'Story', 'Carousel', 'Poster', 'Video'],
+  'Digital Marketing': ['Campaign', 'Ad Creative', 'Ad Copy', 'Poster', 'Video Ad'],
+  SEO: ['Blog Article', 'Backlink', 'Technical Audit', 'Keyword Strategy', 'On-Page Optimization'],
+  'Website Development': ['UI Design', 'Frontend Bugfix', 'Feature Update', 'Maintenance', 'Backup'],
 };
 
 export function itemTypesFor(p: Pick<Project, 'serviceName' | 'subServices' | 'itemRates'>): string[] {
   const base =
-    p.serviceName === 'Media Works' && p.subServices?.length ? p.subServices : DEFAULT_ITEM_TYPES[p.serviceName] || ['Item'];
+    p.serviceName === 'Media Works' && p.subServices?.length
+      ? p.subServices
+      : DEFAULT_ITEM_TYPES[p.serviceName] || ['Deliverable', 'Task', 'Feature', 'Bugfix', 'Item'];
   return Array.from(new Set([...base, ...Object.keys(p.itemRates || {})]));
+}
+
+/**
+ * Returns a descriptive, clear name for ongoing/retainer projects based on category.
+ */
+export function getOngoingCategoryName(serviceName?: string, subServices?: string[]): string {
+  if (!serviceName) return 'Recurring Retainer';
+  const sub = subServices && subServices.length > 0 ? ` (${subServices.join(', ')})` : '';
+  switch (serviceName) {
+    case 'Organic Marketing':
+      return `Organic Marketing Retainer${sub}`;
+    case 'Digital Marketing':
+      return `Digital Marketing Retainer${sub}`;
+    case 'Media Works':
+      return `Media Works & Content Production${sub}`;
+    case 'SEO':
+      return `Monthly SEO Retainer${sub}`;
+    case 'Website Development':
+    case 'Web Development':
+      return `Website Maintenance Retainer${sub}`;
+    case 'Android App':
+    case 'Mobile App':
+      return `App Support & Maintenance${sub}`;
+    default:
+      return `${serviceName} (Retainer)${sub}`;
+  }
+}
+
+/**
+ * Returns badge styling and clean label for a project service category.
+ */
+export function getOngoingCategoryBadge(serviceName?: string): { name: string; color: string; bg: string; border: string } {
+  switch (serviceName) {
+    case 'Organic Marketing':
+      return { name: 'Organic Marketing Retainer', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' };
+    case 'Digital Marketing':
+      return { name: 'Digital Marketing Retainer', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' };
+    case 'Media Works':
+      return { name: 'Media Works & Content', color: '#0891B2', bg: '#ECFEFF', border: '#A5F3FC' };
+    case 'SEO':
+      return { name: 'Monthly SEO Retainer', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' };
+    case 'Website Development':
+    case 'Web Development':
+      return { name: 'Website Maintenance', color: '#D97706', bg: '#FFFBEB', border: '#FDE68A' };
+    default:
+      return {
+        name: serviceName ? `${serviceName} Retainer` : 'Recurring Work',
+        color: '#475569',
+        bg: '#F8FAFC',
+        border: '#E2E8F0',
+      };
+  }
 }
 
 /** What a posting schedule can ask for. */

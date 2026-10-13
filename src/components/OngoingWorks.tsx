@@ -4,7 +4,7 @@ import { ChevronRight, Wallet } from 'lucide-react';
 import { db, type Client, type Deliverable, type Invoice, type Payment, type Project } from '../db/database';
 import { isTaskDone } from '../utils/attendanceTimes';
 import { clientLabel } from '../utils/financials';
-import { currentMonth, monthLabel, ongoingStatement, subServiceLabel, type OngoingStatement } from '../utils/serviceCatalog';
+import { currentMonth, monthLabel, ongoingStatement, subServiceLabel, getOngoingCategoryBadge, getOngoingCategoryName, type OngoingStatement } from '../utils/serviceCatalog';
 import { PaymentModal, billingLine, inr } from './OngoingDialogs';
 
 interface Props {
@@ -172,9 +172,24 @@ export default function OngoingWorks({ projects, clients, deliverables, payments
                   <div className="ow-main">
                     <div className="ow-name">{p.name}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                      <span className="badge badge-blue" style={{ fontSize: 10.5 }}>
-                        {p.serviceName}
-                      </span>
+                      {(() => {
+                        const badge = getOngoingCategoryBadge(p.serviceName);
+                        return (
+                          <span
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: 700,
+                              color: badge.color,
+                              background: badge.bg,
+                              border: `1px solid ${badge.border}`,
+                              borderRadius: 5,
+                              padding: '1px 6px',
+                            }}
+                          >
+                            {badge.name}
+                          </span>
+                        );
+                      })()}
                       {(p.subServices || []).map((s) => (
                         <span key={s} className="badge badge-gray" style={{ fontSize: 10.5 }}>
                           {s}

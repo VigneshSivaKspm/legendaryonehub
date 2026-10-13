@@ -173,7 +173,7 @@ export default function MyAttendance({ onOpenTodayTasks }: { onOpenTodayTasks?: 
     employeeId: myEmployee.id,
     employeeCode: myEmployee.employeeId || String(myEmployee.id),
     employeeName: myEmployee.name,
-    dept: myEmployee.dept,
+    dept: myEmployee.dept || '',
   });
 
   const handleCheckIn = () =>

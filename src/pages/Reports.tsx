@@ -521,7 +521,7 @@ export default function Reports() {
                   {expenseCategoryData.length > 0 ? (
                     <ResponsiveContainer width="100%" height={200}>
                       <PieChart>
-                        <Pie data={expenseCategoryData} cx="50%" cy="50%" outerRadius={75} dataKey="value" label={({ name, pct }) => `${name} ${pct}%`} labelLine={false} fontSize={10}>
+                        <Pie data={expenseCategoryData} cx="50%" cy="50%" outerRadius={75} dataKey="value" label={({ name, pct }: any) => `${name} ${pct}%`} labelLine={false} fontSize={10}>
                           {expenseCategoryData.map((e, i) => <Cell key={i} fill={e.color} />)}
                         </Pie>
                         <Tooltip formatter={(v: any) => [formatINR(v)]} contentStyle={{ fontSize: 12 }} />
@@ -667,7 +667,7 @@ export default function Reports() {
                 {serviceRevData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={220}>
                     <PieChart>
-                      <Pie data={serviceRevData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, pct }) => `${name} ${pct}%`} labelLine={false} fontSize={10}>
+                      <Pie data={serviceRevData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, pct }: any) => `${name} ${pct}%`} labelLine={false} fontSize={10}>
                         {serviceRevData.map((e, i) => <Cell key={i} fill={e.color} />)}
                       </Pie>
                       <Tooltip formatter={(v: any) => [formatINR(v)]} contentStyle={{ fontSize: 12 }} />
@@ -731,8 +731,8 @@ export default function Reports() {
                         <td>{inv.clientName}</td>
                         <td style={{ fontSize: 12, color: '#697586' }}>{inv.gstin || '—'}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatINR(Number(inv.totalAmount || 0) - Number(inv.taxAmount || 0))}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 700, color: '#12B76A' }}>{formatINR(inv.taxAmount)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 700 }}>{formatINR(inv.totalAmount)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, color: '#12B76A' }}>{formatINR(Number(inv.taxAmount || 0))}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 700 }}>{formatINR(Number(inv.totalAmount || 0))}</td>
                       </tr>
                     ))}
                     {gstInvoices.length === 0 && (

@@ -2332,7 +2332,7 @@ export default function Settings() {
                                   {module.label}
                                 </span>
                                 {isLocked && (
-                                  <Lock size={12} style={{ color: '#DC2626' }} title="Protected system permission" />
+                                  <Lock size={12} style={{ color: '#DC2626' }} aria-label="Protected system permission" />
                                 )}
                               </div>
 

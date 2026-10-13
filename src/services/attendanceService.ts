@@ -67,20 +67,44 @@ export async function getAttendanceByDate(dateStr: string): Promise<AttendanceRe
 }
 
 /**
+ * Recursively strip undefined values from an object before sending to Firestore.
+ * Firestore throws a runtime error if any field is undefined.
+ */
+function cleanPayload<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val === undefined) continue;
+    if (val !== null && typeof val === 'object' && !Array.isArray(val) && !(val instanceof Date)) {
+      result[key] = cleanPayload(val);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
+/**
  * Add a new attendance record.
  * Writes to Firestore first, then updates Dexie cache.
  */
 export async function addAttendance(recordData: Omit<AttendanceRecord, 'id'>): Promise<string> {
   const now = new Date().toISOString();
-  const payload = {
+  const rawPayload = {
     ...recordData,
+    dept: recordData.dept || '',
+    employeeCode: recordData.employeeCode || (recordData.employeeId ? String(recordData.employeeId) : ''),
+    notes: recordData.notes || '',
+    checkIn: recordData.checkIn || '',
+    checkOut: recordData.checkOut || '',
+    overtimeHours: recordData.overtimeHours ?? 0,
     createdAt: now,
     updatedAt: now,
   };
+  const payload = cleanPayload(rawPayload);
 
   // 1. Write to Firestore
   const docRef = await addDoc(collection(dbFirestore, ATTENDANCE_COL), payload);
-  const fullRecord: AttendanceRecord = { ...payload, id: docRef.id };
+  const fullRecord: AttendanceRecord = { ...(rawPayload as any), id: docRef.id };
 
   // 2. Update Dexie cache
   await db.attendance.put(fullRecord);
@@ -96,10 +120,11 @@ export async function updateAttendance(
   updates: Partial<AttendanceRecord>
 ): Promise<void> {
   const docRef = doc(dbFirestore, ATTENDANCE_COL, String(id));
-  const payload = {
+  const rawPayload = {
     ...updates,
     updatedAt: new Date().toISOString(),
   };
+  const payload = cleanPayload(rawPayload);
 
   // 1. Write to Firestore
   await updateDoc(docRef, payload as any);
@@ -142,16 +167,32 @@ export async function bulkSaveAttendance(
     if (item.existingId) {
       // Update existing document
       const docRef = doc(dbFirestore, ATTENDANCE_COL, String(item.existingId));
-      const payload = { ...item.record, updatedAt: now };
+      const rawPayload = {
+        ...item.record,
+        dept: item.record.dept || '',
+        updatedAt: now,
+      };
+      const payload = cleanPayload(rawPayload);
       batch.update(docRef, payload as any);
       // Merge so lunch / check-out / approval fields not in the payload survive
-      dexieUpdates.push({ id: item.existingId, changes: payload });
+      dexieUpdates.push({ id: item.existingId, changes: rawPayload as Partial<AttendanceRecord> });
     } else {
       // Create new document
       const docRef = doc(collection(dbFirestore, ATTENDANCE_COL));
-      const payload = { ...item.record, createdAt: now, updatedAt: now };
+      const rawPayload = {
+        ...item.record,
+        dept: item.record.dept || '',
+        employeeCode: item.record.employeeCode || (item.record.employeeId ? String(item.record.employeeId) : ''),
+        notes: item.record.notes || '',
+        checkIn: item.record.checkIn || '',
+        checkOut: item.record.checkOut || '',
+        overtimeHours: item.record.overtimeHours ?? 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const payload = cleanPayload(rawPayload);
       batch.set(docRef, payload);
-      dexiePuts.push({ ...payload, id: docRef.id });
+      dexiePuts.push({ ...(rawPayload as any), id: docRef.id });
     }
   }
 
