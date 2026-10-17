@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Employee, type Project, type TimesheetEntry, type AttendanceRecord, type ProjectTask, type Deliverable } from '../db/database';
+import { db, type Employee, type TimesheetEntry, type AttendanceRecord } from '../db/database';
 import { newestFirst } from '../utils/sort';
 import {
   getAllTimesheets,
@@ -9,52 +9,80 @@ import {
   deleteTimesheet,
 } from '../services/timesheetService';
 import { getAllAttendance } from '../services/attendanceService';
+import { getAllLeaveRequests } from '../services/leaveService';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
   Clock,
   Calendar,
-  DollarSign,
-  CheckCircle2,
-  XCircle,
+  CalendarDays,
+  CalendarRange,
+  IndianRupee,
+  Users,
+  Timer,
   Plus,
-  Search,
+  Download,
   Edit3,
   Trash2,
-  Users,
-  Briefcase,
-  CalendarDays,
-  AlertCircle,
-  CheckSquare,
   ChevronLeft,
   ChevronRight,
-  Download,
-  BarChart2,
-  Layers,
-  Sparkles,
+  ChevronDown,
+  AlertCircle,
+  Info,
 } from 'lucide-react';
-import { workedMinutes, lunchMinutes, toHHMM } from '../utils/attendanceTimes';
+import {
+  WORK_START,
+  WORK_END,
+  STANDARD_DAY_HOURS,
+  LUNCH_MAX_MINUTES,
+  minutesOf,
+  workedMinutes,
+  lunchMinutes,
+  formatDuration,
+  formatTime12h,
+  statusHasTimes,
+  toHHMM,
+  toLocalDate,
+} from '../utils/attendanceTimes';
+import { computeMonthPay, datesInMonth, PAID_DAY_MINUTES, type DayPay, type MonthPay } from '../utils/salary';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 
 type PeriodMode = 'daily' | 'weekly' | 'monthly';
 
-export interface UnifiedWorkEntry {
-  id: string;
-  employeeId: string | number;
-  employeeName: string;
-  employeeCode?: string;
-  projectId: string | number;
-  projectName: string;
+type DayStatus =
+  | 'Working'
+  | 'Present'
+  | 'Late'
+  | 'Half Day'
+  | 'On Leave'
+  | 'Absent'
+  | 'Logged'
+  | 'Off'
+  | 'Not In'
+  | 'Upcoming'
+  | 'No Record';
+
+/** One employee on one date: what they worked and what they earned. */
+interface DayCell {
   date: string;
-  taskDescription: string;
-  startTime: string;
-  endTime: string;
-  breakDurationMinutes: number;
-  totalHours: number;
-  isBillable: boolean;
-  status: string;
-  source: 'manual' | 'attendance' | 'task';
-  rawTimesheet?: TimesheetEntry;
-  rawAttendance?: AttendanceRecord;
+  status: DayStatus;
+  minutes: number;
+  earned: number;
+  checkIn?: string;
+  checkOut?: string;
+  breakMins?: number;
+  missingCheckout?: boolean;
+}
+
+interface EmployeeRow {
+  emp: Employee;
+  key: string;
+  cells: DayCell[];
+  minutes: number;
+  earned: number;
+  daysWorked: number;
+  salary: number;
+  dailyRate: number;
 }
 
 interface FormState {
@@ -67,6 +95,68 @@ interface FormState {
   breakDurationMinutes: string | number;
   isBillable: boolean;
   notes: string;
+}
+
+/** A full working day is 9 hours with a 1-hour lunch, so 8 hours of actual work. */
+const TARGET_DAY_MINUTES = STANDARD_DAY_HOURS * 60 - LUNCH_MAX_MINUTES;
+
+const STATUS_STYLE: Record<DayStatus, { badge: string; label: string; short: string }> = {
+  Working: { badge: 'badge-blue', label: '● Working now', short: 'Working' },
+  Present: { badge: 'badge-green', label: 'Present', short: '—' },
+  Late: { badge: 'badge-amber', label: 'Late', short: '—' },
+  'Half Day': { badge: 'badge-cyan', label: 'Half day', short: 'Half day' },
+  'On Leave': { badge: 'badge-purple', label: 'On leave', short: 'Leave' },
+  Absent: { badge: 'badge-red', label: 'Absent', short: 'Absent' },
+  Logged: { badge: 'badge-teal', label: 'Logged manually', short: '—' },
+  Off: { badge: 'badge-gray', label: 'Week off', short: 'Off' },
+  'Not In': { badge: 'badge-gray', label: 'Not checked in', short: '—' },
+  Upcoming: { badge: 'badge-gray', label: 'Upcoming', short: '' },
+  'No Record': { badge: 'badge-gray', label: 'No record', short: '—' },
+};
+
+const inr = (n: number) => '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN');
+const hrs = (mins: number) => (mins > 0 ? formatDuration(mins) : '0h');
+const parseDate = (d: string) => new Date(d + 'T00:00:00');
+const fmt = (d: string, opts: Intl.DateTimeFormatOptions) => parseDate(d).toLocaleDateString('en-IN', opts);
+const addDays = (d: string, n: number) => {
+  const x = parseDate(d);
+  x.setDate(x.getDate() + n);
+  return toLocalDate(x);
+};
+const startOfWeek = (d: string) => addDays(d, -((parseDate(d).getDay() + 6) % 7));
+const normDate = (raw: string) => {
+  const d = (raw || '').trim();
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(d) ? d.split('/').reverse().join('-') : d.slice(0, 10);
+};
+const initialsOf = (name: string) =>
+  (name || '')
+    .split(' ')
+    .filter(Boolean)
+    .map((n) => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'EM';
+const empKey = (e: Employee) => String(e.id ?? e.employeeId);
+
+/** Hours colour scale: full day green, at least half a day blue, short day amber. */
+function hoursTone(mins: number) {
+  if (mins >= TARGET_DAY_MINUTES) return { bg: '#DCFCE7', fg: '#166534', bar: '#16A34A' };
+  if (mins >= TARGET_DAY_MINUTES / 2) return { bg: '#EEF2FF', fg: '#3B5BDB', bar: '#3B5BDB' };
+  return { bg: '#FEF3C7', fg: '#92400E', bar: '#F59E0B' };
+}
+
+/** Monday-to-Sunday weeks of a month, clipped to the month's first and last day. */
+function weeksOfMonth(month: string) {
+  const weeks: { start: string; end: string; dates: string[] }[] = [];
+  for (const d of datesInMonth(month)) {
+    const last = weeks[weeks.length - 1];
+    if (!last || parseDate(d).getDay() === 1) weeks.push({ start: d, end: d, dates: [d] });
+    else {
+      last.end = d;
+      last.dates.push(d);
+    }
+  }
+  return weeks;
 }
 
 /**
@@ -116,21 +206,143 @@ export function calculateDurationHours(
   return Math.round((totalMins / 60) * 10) / 10;
 }
 
+function Avatar({ name }: { name: string }) {
+  return (
+    <div
+      style={{
+        width: 32,
+        height: 32,
+        borderRadius: '50%',
+        background: '#EEF2FF',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 12,
+        fontWeight: 700,
+        color: '#3B5BDB',
+        flexShrink: 0,
+      }}
+    >
+      {initialsOf(name)}
+    </div>
+  );
+}
+
+function EmployeeCell({ emp }: { emp: Employee }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 170 }}>
+      <Avatar name={emp.name} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 13.5, color: '#1E293B', whiteSpace: 'nowrap' }}>{emp.name}</div>
+        <div style={{ fontSize: 11, color: '#64748B', whiteSpace: 'nowrap' }}>
+          {emp.role || 'Employee'}
+          {emp.employeeId ? ` · ${emp.employeeId}` : ''}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ icon, label, value, sub, color }: { icon: ReactNode; label: string; value: string; sub: string; color?: string }) {
+  return (
+    <div className="stat-card">
+      <div
+        style={{
+          fontSize: 11.5,
+          color: '#697586',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+          marginBottom: 6,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        }}
+      >
+        {icon} {label}
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: color || '#1A1F36', fontFamily: 'Plus Jakarta Sans', lineHeight: 1.15 }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 12, color: '#697586', marginTop: 4 }}>{sub}</div>
+    </div>
+  );
+}
+
+/** Hours worked with a bar filled against the 8-hour working day. */
+function HoursBar({ minutes }: { minutes: number }) {
+  if (minutes <= 0) return <span style={{ color: '#94A3B8', fontSize: 13 }}>—</span>;
+  const tone = hoursTone(minutes);
+  const pct = Math.min(100, (minutes / TARGET_DAY_MINUTES) * 100);
+  return (
+    <div style={{ minWidth: 150 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontWeight: 800, fontSize: 14, color: '#1A1F36' }}>{hrs(minutes)}</span>
+        <span style={{ fontSize: 11, color: tone.fg, fontWeight: 600 }}>
+          {minutes >= TARGET_DAY_MINUTES ? 'Full day' : `${Math.round(pct)}% of ${hrs(TARGET_DAY_MINUTES)}`}
+        </span>
+      </div>
+      <div style={{ height: 6, borderRadius: 99, background: '#EEF2F7', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: 99, background: tone.bar }} />
+      </div>
+    </div>
+  );
+}
+
+function Legend({ hint }: { hint?: string }) {
+  const items = [
+    { label: `${hrs(TARGET_DAY_MINUTES)}+ full day`, tone: hoursTone(TARGET_DAY_MINUTES) },
+    { label: `${hrs(TARGET_DAY_MINUTES / 2)} – ${hrs(TARGET_DAY_MINUTES)}`, tone: hoursTone(TARGET_DAY_MINUTES / 2) },
+    { label: `under ${hrs(TARGET_DAY_MINUTES / 2)}`, tone: hoursTone(1) },
+  ];
+  return (
+    <div
+      style={{
+        padding: '10px 16px',
+        borderTop: '1px solid #E5E9F2',
+        display: 'flex',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 10,
+        fontSize: 12,
+        color: '#64748B',
+      }}
+    >
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        {items.map((i) => (
+          <span key={i.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: i.tone.bg, border: `1px solid ${i.tone.bar}` }} />
+            {i.label}
+          </span>
+        ))}
+      </div>
+      {hint && <span>{hint}</span>}
+    </div>
+  );
+}
+
+const stickyCol = { position: 'sticky', left: 0, background: '#FFFFFF', zIndex: 1 } as const;
+const stickyHead = { ...stickyCol, background: '#F8F9FC', zIndex: 2 } as const;
+const footCell = { background: '#F8F9FC', fontWeight: 700, borderTop: '1px solid #E5E9F2' } as const;
+
 export default function Timesheets() {
   const { showToast } = useToast();
+  const { companyProfile } = useAuth();
+  const workingWeekdays = companyProfile?.workingDays;
 
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
-  const currentMonthStr = useMemo(() => new Date().toISOString().slice(0, 7), []);
+  // Ticks every minute so hours and earnings of people still at work stay current
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const todayStr = toLocalDate(now);
+  const nowHHMM = toHHMM(now);
 
-  const [periodMode, setPeriodMode] = useState<PeriodMode>('weekly');
-  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
-
-  // Filters
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('daily');
+  const [anchor, setAnchor] = useState<string>(() => toLocalDate(new Date()));
   const [employeeFilter, setEmployeeFilter] = useState('All');
-  const [projectFilter, setProjectFilter] = useState('All');
-  const [billableFilter, setBillableFilter] = useState('All');
-  const [search, setSearch] = useState('');
+  const [showLogs, setShowLogs] = useState(false);
 
   // Modals
   const [showModal, setShowModal] = useState(false);
@@ -153,420 +365,280 @@ export default function Timesheets() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Synchronize from Firestore on mount: both manual timesheets and employee attendance records
+  // Synchronize from Firestore on mount: manual timesheets, attendance and leave (leave affects pay)
   useEffect(() => {
-    getAllTimesheets().catch((err) => {
-      console.warn('Initial timesheets fetch error:', err);
-    });
-    getAllAttendance().catch((err) => {
-      console.warn('Initial attendance fetch error:', err);
-    });
+    getAllTimesheets().catch((err) => console.warn('Initial timesheets fetch error:', err));
+    getAllAttendance().catch((err) => console.warn('Initial attendance fetch error:', err));
+    getAllLeaveRequests().catch((err) => console.warn('Initial leave fetch error:', err));
   }, []);
 
   // Live queries from Dexie cache
   const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];
   const attendanceRecords = useLiveQuery(() => db.attendance.toArray(), []) || [];
-  const tasks = useLiveQuery(() => db.tasks.toArray(), []) || [];
-  const deliverables = useLiveQuery(() => db.deliverables.toArray(), []) || [];
+  const leaves = useLiveQuery(() => db.leaveRequests.toArray(), []) || [];
   const timesheetRecords = useLiveQuery(async () => newestFirst(await db.timesheets.toArray(), (t) => t.date), []) || [];
 
-  const activeEmployees = useMemo(() => {
-    return employees.filter((e) => e.status !== 'Inactive');
-  }, [employees]);
+  const activeEmployees = useMemo(
+    () => employees.filter((e) => e.status !== 'Inactive').sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
 
-  // Calculate Monday to Sunday week range & day objects for the selectedDate
-  const weekBounds = useMemo(() => {
-    const target = new Date(selectedDate);
-    const validTarget = isNaN(target.getTime()) ? new Date() : target;
-    const day = validTarget.getDay(); // 0 is Sun, 1 is Mon...
-    const diffToMon = validTarget.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(validTarget);
-    monday.setDate(diffToMon);
+  const visibleEmployees = useMemo(
+    () => (employeeFilter === 'All' ? activeEmployees : activeEmployees.filter((e) => empKey(e) === employeeFilter)),
+    [activeEmployees, employeeFilter]
+  );
 
-    const days: { dateStr: string; dayName: string; dayShort: string; isToday: boolean }[] = [];
-    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-    for (let i = 0; i < 7; i++) {
-      const cur = new Date(monday);
-      cur.setDate(monday.getDate() + i);
-      const iso = cur.toISOString().split('T')[0];
-      days.push({
-        dateStr: iso,
-        dayName: dayNames[i],
-        dayShort: `${dayNames[i]} ${cur.getDate()}/${cur.getMonth() + 1}`,
-        isToday: iso === todayStr,
-      });
+  // The dates shown for the chosen day / week / month, with a friendly label
+  const period = useMemo(() => {
+    if (periodMode === 'daily') {
+      const title =
+        anchor === todayStr ? 'Today' : anchor === addDays(todayStr, -1) ? 'Yesterday' : fmt(anchor, { weekday: 'long' });
+      return { dates: [anchor], title, sub: fmt(anchor, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }), noun: 'day' };
     }
-
-    const monStr = days[0].dateStr;
-    const sunStr = days[6].dateStr;
-    const formattedRange = `${new Date(monStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${new Date(sunStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
-
-    return { monStr, sunStr, days, formattedRange };
-  }, [selectedDate, todayStr]);
-
-  // Unified work entries: combines manually logged timesheets with attendance work logs & task activity
-  const unifiedEntries = useMemo(() => {
-    const list: UnifiedWorkEntry[] = [];
-    const manualKeys = new Set<string>();
-
-    // 1. Include manually logged timesheets from db.timesheets
-    timesheetRecords.forEach((t) => {
-      const key = `${t.employeeId}_${t.date}`;
-      manualKeys.add(key);
-      list.push({
-        id: `TS-${t.id}`,
-        employeeId: t.employeeId,
-        employeeName: t.employeeName,
-        projectId: t.projectId,
-        projectName: t.projectName,
-        date: t.date,
-        taskDescription: t.taskDescription || 'Logged Project Work',
-        startTime: t.startTime || '09:00',
-        endTime: t.endTime || '17:30',
-        breakDurationMinutes: t.breakDurationMinutes ?? 30,
-        totalHours: Number(t.totalHours) || 0,
-        isBillable: t.isBillable ?? true,
-        status: 'Logged',
-        source: 'manual',
-        rawTimesheet: t,
-      });
-    });
-
-    // 2. Synthesize work entries from employee attendance records (without needing manual log)
-    attendanceRecords.forEach((att) => {
-      // Exclude absent or on-leave
-      if (att.status === 'Absent' || att.status === 'On Leave') return;
-
-      let attDate = (att.date || '').trim();
-      if (/^\d{2}\/\d{2}\/\d{4}$/.test(attDate)) {
-        attDate = attDate.split('/').reverse().join('-');
-      }
-      if (!attDate) return;
-
-      const emp = activeEmployees.find(
-        (e) =>
-          (att.employeeId && String(e.id) === String(att.employeeId)) ||
-          (att.employeeCode && String(e.employeeId) === String(att.employeeCode)) ||
-          (att.employeeName && e.name.toLowerCase() === att.employeeName.toLowerCase())
-      );
-      const resolvedEmpId = emp?.id || emp?.employeeId || att.employeeId || att.employeeCode || '';
-      const resolvedEmpName = emp?.name || att.employeeName || 'Employee';
-
-      const key = `${resolvedEmpId}_${attDate}`;
-      if (manualKeys.has(key)) {
-        // Manual timesheet already logged for this employee on this date
-        return;
-      }
-
-      const start = att.checkIn || '09:00';
-      const isToday = attDate === todayStr;
-      const end = att.checkOut || (isToday ? toHHMM(new Date()) : '18:00');
-      const lunchBreak = lunchMinutes(att) ?? (att.lunchOut && att.lunchIn ? 60 : 45);
-
-      let workedHrs = 0;
-      const wm = workedMinutes(att, isToday ? toHHMM(new Date()) : undefined);
-      if (wm != null && wm > 0) {
-        workedHrs = Math.round((wm / 60) * 10) / 10;
-      } else {
-        workedHrs = calculateDurationHours(start, end, lunchBreak);
-        if (workedHrs <= 0) {
-          workedHrs = att.status === 'Half Day' ? 4.5 : 8.0;
-        }
-      }
-
-      // Check tasks assigned to this employee on this date or currently in progress
-      const empTasks = tasks.filter((t) => {
-        const isAssigned =
-          (t.assignedTo && t.assignedTo.toLowerCase() === resolvedEmpName.toLowerCase()) ||
-          (t.assignee && t.assignee.toLowerCase() === resolvedEmpName.toLowerCase()) ||
-          (t.assignedToId && String(t.assignedToId) === String(resolvedEmpId));
-
-        if (!isAssigned) return false;
-        const tDate = t.dueDate || t.deadline || t.start;
-        return tDate === attDate || (!t.dueDate && t.status !== 'Completed');
-      });
-
-      // Check deliverables
-      const empDeliverables = deliverables.filter((d) => {
-        const isOwner =
-          (d.employeeName && d.employeeName.toLowerCase() === resolvedEmpName.toLowerCase()) ||
-          (d.employeeId && String(d.employeeId) === String(resolvedEmpId));
-        return isOwner && (d.date === attDate || d.period === attDate.slice(0, 7));
-      });
-
-      const assignedProject = projects.find((p) => {
-        if (empTasks.length > 0 && empTasks[0].projectId) {
-          return String(p.id) === String(empTasks[0].projectId);
-        }
-        return (p.team || []).some((m) => m.toLowerCase() === resolvedEmpName.toLowerCase()) || p.manager === resolvedEmpName;
-      });
-
-      let taskDesc = '';
-      if (empTasks.length > 0) {
-        taskDesc = empTasks.map((t) => `${t.title || t.task || 'Task'} (${t.status || 'Active'})`).join(', ');
-      } else if (empDeliverables.length > 0) {
-        taskDesc = empDeliverables.map((d) => `${d.type || 'Deliverable'} × ${d.qty || 1}`).join(', ');
-      } else {
-        taskDesc = `Daily Attendance & Operations · ${att.status}${att.notes ? ` · ${att.notes}` : ''}`;
-      }
-
-      const projName = assignedProject?.name || empTasks[0]?.projectName || 'General Operations';
-      const projId = assignedProject?.id || empTasks[0]?.projectId || 'general';
-
-      list.push({
-        id: `ATT-${att.id || `${resolvedEmpId}-${attDate}`}`,
-        employeeId: resolvedEmpId,
-        employeeName: resolvedEmpName,
-        employeeCode: emp?.employeeId || att.employeeCode,
-        projectId: projId,
-        projectName: projName,
-        date: attDate,
-        taskDescription: taskDesc,
-        startTime: start,
-        endTime: end,
-        breakDurationMinutes: lunchBreak,
-        totalHours: workedHrs,
-        isBillable: projId !== 'general',
-        status: att.status,
-        source: 'attendance',
-        rawAttendance: att,
-      });
-    });
-
-    return list.sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
-  }, [timesheetRecords, attendanceRecords, activeEmployees, tasks, deliverables, projects, todayStr]);
-
-  // Filter entries based on PeriodMode and selected date/month/week
-  const periodFilteredEntries = useMemo(() => {
-    return unifiedEntries.filter((rec) => {
-      if (periodMode === 'daily') {
-        return rec.date === selectedDate;
-      } else if (periodMode === 'monthly') {
-        return rec.date.startsWith(selectedMonth);
-      } else if (periodMode === 'weekly') {
-        return rec.date >= weekBounds.monStr && rec.date <= weekBounds.sunStr;
-      }
-      return true;
-    });
-  }, [unifiedEntries, periodMode, selectedDate, selectedMonth, weekBounds]);
-
-  // Apply search, employee, project, and billable dropdown filters
-  const filteredEntries = useMemo(() => {
-    return periodFilteredEntries.filter((rec) => {
-      const q = search.toLowerCase().trim();
-      const empMatch = !q || (rec.employeeName || '').toLowerCase().includes(q);
-      const projMatch = !q || (rec.projectName || '').toLowerCase().includes(q);
-      const taskMatch = !q || (rec.taskDescription || '').toLowerCase().includes(q);
-      const matchesSearch = empMatch || projMatch || taskMatch;
-
-      const matchesEmp =
-        employeeFilter === 'All' ||
-        String(rec.employeeId) === String(employeeFilter) ||
-        (rec.employeeName && rec.employeeName.toLowerCase() === employeeFilter.toLowerCase());
-
-      const matchesProj =
-        projectFilter === 'All' || String(rec.projectId) === String(projectFilter) || rec.projectName === projectFilter;
-
-      const matchesBillable =
-        billableFilter === 'All' ||
-        (billableFilter === 'Billable' && rec.isBillable) ||
-        (billableFilter === 'Non-Billable' && !rec.isBillable);
-
-      return matchesSearch && matchesEmp && matchesProj && matchesBillable;
-    });
-  }, [periodFilteredEntries, search, employeeFilter, projectFilter, billableFilter]);
-
-  // Weekly Employee Matrix: per-employee day-by-day hours Mon-Sun, total weekly hours, tasks, projects
-  const weeklyEmployeeMatrix = useMemo(() => {
-    const list = activeEmployees.filter((emp) => {
-      if (employeeFilter !== 'All') {
-        return (
-          String(emp.id) === String(employeeFilter) ||
-          String(emp.employeeId) === String(employeeFilter) ||
-          emp.name.toLowerCase() === employeeFilter.toLowerCase()
-        );
-      }
-      return true;
-    });
-
-    return list.map((emp) => {
-      const empIdStr = String(emp.id || emp.employeeId);
-      const empEntries = periodFilteredEntries.filter(
-        (rec) =>
-          String(rec.employeeId) === empIdStr ||
-          rec.employeeName.toLowerCase() === emp.name.toLowerCase()
-      );
-
-      const dayHours: Record<string, number> = {};
-      const dayTasks: Record<string, string[]> = {};
-
-      weekBounds.days.forEach((d) => {
-        const forDay = empEntries.filter((e) => e.date === d.dateStr);
-        const hrs = forDay.reduce((sum, e) => sum + e.totalHours, 0);
-        dayHours[d.dateStr] = Math.round(hrs * 10) / 10;
-        dayTasks[d.dateStr] = forDay.map((e) => e.projectName);
-      });
-
-      const totalWeekHours = Math.round(empEntries.reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
-      const billableHours = Math.round(empEntries.filter((e) => e.isBillable).reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
-      const daysPresent = Object.values(dayHours).filter((h) => h > 0).length;
-
-      const projectsWorked = Array.from(new Set(empEntries.map((e) => e.projectName).filter(Boolean)));
-
-      const weekTasks = tasks.filter((t) => {
-        const assigned =
-          (t.assignedTo && t.assignedTo.toLowerCase() === emp.name.toLowerCase()) ||
-          (t.assignee && t.assignee.toLowerCase() === emp.name.toLowerCase()) ||
-          (t.assignedToId && String(t.assignedToId) === empIdStr);
-        const tDate = t.dueDate || t.deadline || t.start;
-        return assigned && tDate && tDate >= weekBounds.monStr && tDate <= weekBounds.sunStr;
-      });
-
-      return {
-        employee: emp,
-        empIdStr,
-        dayHours,
-        dayTasks,
-        totalWeekHours,
-        billableHours,
-        nonBillableHours: Math.round((totalWeekHours - billableHours) * 10) / 10,
-        daysPresent,
-        projectsWorked,
-        tasksCount: weekTasks.length,
-        completedTasksCount: weekTasks.filter((t) => t.status === 'Completed' || t.status === 'Done').length,
-      };
-    });
-  }, [activeEmployees, employeeFilter, periodFilteredEntries, weekBounds, tasks]);
-
-  // Monthly Employee Summary: monthly hours, days present, billable %, deliverables, avg hours
-  const monthlyEmployeeSummary = useMemo(() => {
-    const list = activeEmployees.filter((emp) => {
-      if (employeeFilter !== 'All') {
-        return (
-          String(emp.id) === String(employeeFilter) ||
-          String(emp.employeeId) === String(employeeFilter) ||
-          emp.name.toLowerCase() === employeeFilter.toLowerCase()
-        );
-      }
-      return true;
-    });
-
-    return list.map((emp) => {
-      const empIdStr = String(emp.id || emp.employeeId);
-      const empEntries = periodFilteredEntries.filter(
-        (rec) =>
-          String(rec.employeeId) === empIdStr ||
-          rec.employeeName.toLowerCase() === emp.name.toLowerCase()
-      );
-
-      const totalMonthHours = Math.round(empEntries.reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
-      const billableHours = Math.round(empEntries.filter((e) => e.isBillable).reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
-      const uniqueDates = new Set(empEntries.filter((e) => e.totalHours > 0).map((e) => e.date)).size;
-      const avgDaily = uniqueDates > 0 ? Math.round((totalMonthHours / uniqueDates) * 10) / 10 : 0;
-      const projectsWorked = Array.from(new Set(empEntries.map((e) => e.projectName).filter(Boolean)));
-
-      const empDeliverables = deliverables.filter((d) => {
-        const isOwner =
-          (d.employeeName && d.employeeName.toLowerCase() === emp.name.toLowerCase()) ||
-          (d.employeeId && String(d.employeeId) === empIdStr);
-        return isOwner && ((d.period && d.period === selectedMonth) || (d.date && d.date.startsWith(selectedMonth)));
-      });
-
-      const totalDeliverablesCount = empDeliverables.reduce((s, d) => s + (Number(d.qty) || 1), 0);
-
-      return {
-        employee: emp,
-        empIdStr,
-        totalMonthHours,
-        billableHours,
-        nonBillableHours: Math.round((totalMonthHours - billableHours) * 10) / 10,
-        daysPresent: uniqueDates,
-        avgDaily,
-        projectsWorked,
-        deliverablesCount: totalDeliverablesCount,
-      };
-    });
-  }, [activeEmployees, employeeFilter, periodFilteredEntries, selectedMonth, deliverables]);
-
-  // Summary Metrics calculated dynamically from active entries
-  const summaryMetrics = useMemo(() => {
-    const totalHours = filteredEntries.reduce((sum, r) => sum + (Number(r.totalHours) || 0), 0);
-    const billableHours = filteredEntries
-      .filter((r) => r.isBillable)
-      .reduce((sum, r) => sum + (Number(r.totalHours) || 0), 0);
-    const nonBillableHours = filteredEntries
-      .filter((r) => !r.isBillable)
-      .reduce((sum, r) => sum + (Number(r.totalHours) || 0), 0);
-
-    const uniqueEmployees = new Set(filteredEntries.map((r) => String(r.employeeId))).size;
-    const uniqueDates = new Set(filteredEntries.map((r) => r.date)).size;
-
-    const avgHoursPerDay =
-      uniqueDates > 0 ? Math.round((totalHours / uniqueDates) * 10) / 10 : 0;
-
-    return {
-      totalHours: Math.round(totalHours * 10) / 10,
-      billableHours: Math.round(billableHours * 10) / 10,
-      nonBillableHours: Math.round(nonBillableHours * 10) / 10,
-      activeEmployees: uniqueEmployees,
-      avgHoursPerDay,
-    };
-  }, [filteredEntries]);
-
-  // Quick action to log / adjust an entry in the modal
-  const handleOpenLogForEntry = (entry: UnifiedWorkEntry) => {
-    if (entry.rawTimesheet) {
-      handleOpenEditModal(entry.rawTimesheet);
-      return;
+    if (periodMode === 'weekly') {
+      const mon = startOfWeek(anchor);
+      const dates = Array.from({ length: 7 }, (_, i) => addDays(mon, i));
+      const thisMon = startOfWeek(todayStr);
+      const title =
+        mon === thisMon ? 'This week' : mon === addDays(thisMon, -7) ? 'Last week' : `Week of ${fmt(mon, { day: 'numeric', month: 'short' })}`;
+      const sub = `${fmt(dates[0], { day: 'numeric', month: 'short' })} – ${fmt(dates[6], { day: 'numeric', month: 'short', year: 'numeric' })}`;
+      return { dates, title, sub, noun: 'week' };
     }
-    setEditingEntry(null);
-    const matchedProj = projects.find((p) => String(p.id) === String(entry.projectId) || p.name === entry.projectName);
-    setForm({
-      employeeId: entry.employeeId,
-      projectId: matchedProj?.id || projects[0]?.id || '',
-      date: entry.date,
-      taskDescription: entry.taskDescription,
-      startTime: entry.startTime,
-      endTime: entry.endTime,
-      breakDurationMinutes: entry.breakDurationMinutes,
-      isBillable: entry.isBillable,
-      notes: `Logged from ${entry.source === 'attendance' ? 'attendance' : 'task'} log`,
-    });
-    setErrors({});
-    setShowModal(true);
+    const month = anchor.slice(0, 7);
+    const thisMonth = todayStr.slice(0, 7);
+    const lastMonth = toLocalDate(new Date(Number(thisMonth.slice(0, 4)), Number(thisMonth.slice(5, 7)) - 2, 1)).slice(0, 7);
+    const full = fmt(`${month}-01`, { month: 'long', year: 'numeric' });
+    const title = month === thisMonth ? 'This month' : month === lastMonth ? 'Last month' : full;
+    return { dates: datesInMonth(month), title, sub: title === full ? '' : full, noun: 'month' };
+  }, [periodMode, anchor, todayStr]);
+
+  const periodHasToday = period.dates.includes(todayStr);
+
+  const shiftPeriod = (dir: 1 | -1) => {
+    if (periodMode === 'daily') setAnchor(addDays(anchor, dir));
+    else if (periodMode === 'weekly') setAnchor(addDays(anchor, 7 * dir));
+    else {
+      const [y, m] = anchor.slice(0, 7).split('-').map(Number);
+      setAnchor(toLocalDate(new Date(y, m - 1 + dir, 1)));
+    }
   };
 
-  // Export CSV handler
+  // Attendance grouped by employee (matched by id, then employee code, then name) with normalised dates
+  const attendanceByEmp = useMemo(() => {
+    const map = new Map<string, AttendanceRecord[]>();
+    for (const att of attendanceRecords) {
+      const date = normDate(att.date);
+      if (!date) continue;
+      const emp =
+        (att.employeeId != null && att.employeeId !== '' && activeEmployees.find((e) => String(e.id) === String(att.employeeId))) ||
+        (att.employeeCode && activeEmployees.find((e) => e.employeeId === att.employeeCode)) ||
+        (att.employeeName && activeEmployees.find((e) => e.name.toLowerCase() === att.employeeName.toLowerCase())) ||
+        undefined;
+      if (!emp) continue;
+      const key = empKey(emp);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push({ ...att, date });
+    }
+    return map;
+  }, [attendanceRecords, activeEmployees]);
+
+  // Manually logged timesheets grouped by employee, then by date
+  const timesheetsByEmp = useMemo(() => {
+    const map = new Map<string, Map<string, TimesheetEntry[]>>();
+    for (const t of timesheetRecords) {
+      const emp = activeEmployees.find(
+        (e) =>
+          String(e.id) === String(t.employeeId) ||
+          String(e.employeeId) === String(t.employeeId) ||
+          (!!t.employeeName && e.name.toLowerCase() === t.employeeName.toLowerCase())
+      );
+      if (!emp) continue;
+      const key = empKey(emp);
+      const date = normDate(t.date);
+      if (!map.has(key)) map.set(key, new Map());
+      const byDate = map.get(key)!;
+      if (!byDate.has(date)) byDate.set(date, []);
+      byDate.get(date)!.push(t);
+    }
+    return map;
+  }, [timesheetRecords, activeEmployees]);
+
+  // Per employee: hours worked and salary earned for every date in the period
+  const rows: EmployeeRow[] = useMemo(() => {
+    return visibleEmployees.map((emp) => {
+      const key = empKey(emp);
+      const atts = attendanceByEmp.get(key) || [];
+      const attByDate = new Map(atts.map((a) => [a.date, a]));
+      const logsByDate = timesheetsByEmp.get(key);
+      const empLeaves = leaves.filter((l) => String(l.employeeId) === String(emp.id));
+      const salary = Number(emp.salary) || 0;
+
+      // Pay uses the same rules as Payroll, computed once per month touched by the period
+      const payCache = new Map<string, { pay: MonthPay; byDate: Map<string, DayPay> }>();
+      const payFor = (month: string) => {
+        let hit = payCache.get(month);
+        if (!hit) {
+          const pay = computeMonthPay({ month, salary, workingWeekdays, attendance: atts, leaves: empLeaves, today: todayStr });
+          hit = { pay, byDate: new Map(pay.days.map((d) => [d.date, d])) };
+          payCache.set(month, hit);
+        }
+        return hit;
+      };
+
+      const cells: DayCell[] = period.dates.map((date) => {
+        const { pay, byDate } = payFor(date.slice(0, 7));
+        const day = byDate.get(date);
+        const att = attByDate.get(date);
+        const logs = logsByDate?.get(date) || [];
+        const hasTimes = !!att && statusHasTimes(att.status) && !!att.checkIn;
+        const inProgress = hasTimes && !att!.checkOut && date === todayStr;
+
+        let minutes = 0;
+        let missingCheckout = false;
+        if (logs.length > 0) {
+          // A manual timesheet replaces the attendance clock for that day
+          minutes = Math.round(logs.reduce((s, t) => s + (Number(t.totalHours) || 0), 0) * 60);
+        } else if (hasTimes) {
+          if (att!.checkOut || inProgress) {
+            minutes = workedMinutes(att!, inProgress ? nowHHMM : undefined) || 0;
+          } else {
+            missingCheckout = true;
+            minutes = workedMinutes(att!, WORK_END) || 0;
+          }
+        }
+
+        let earned = day?.earned || 0;
+        if (inProgress) {
+          // Still at work: count pay only up to now
+          const elapsed = Math.min(
+            PAID_DAY_MINUTES,
+            Math.max(0, minutesOf(nowHHMM) - Math.max(minutesOf(att!.checkIn), minutesOf(WORK_START)))
+          );
+          earned = Math.min(earned, pay.rates.perMinute * elapsed);
+        }
+
+        let status: DayStatus;
+        if (date > todayStr) status = 'Upcoming';
+        else if (inProgress) status = 'Working';
+        else if (att) status = att.status;
+        else if (logs.length > 0) status = 'Logged';
+        else if (day?.kind === 'Off') status = 'Off';
+        else if (day?.kind === 'Paid Leave' || day?.kind === 'Unpaid Leave') status = 'On Leave';
+        else if (day?.kind === 'Absent') status = 'Absent';
+        else if (day?.kind === 'Upcoming') status = 'Not In';
+        else status = 'No Record';
+
+        return {
+          date,
+          status,
+          minutes,
+          earned,
+          checkIn: logs.length ? logs[logs.length - 1].startTime : att?.checkIn,
+          checkOut: logs.length ? logs[0].endTime : att?.checkOut,
+          breakMins: logs.length
+            ? logs.reduce((s, t) => s + (Number(t.breakDurationMinutes) || 0), 0)
+            : att
+              ? lunchMinutes(att) ?? undefined
+              : undefined,
+          missingCheckout,
+        };
+      });
+
+      return {
+        emp,
+        key,
+        cells,
+        minutes: cells.reduce((s, c) => s + c.minutes, 0),
+        earned: cells.reduce((s, c) => s + c.earned, 0),
+        daysWorked: cells.filter((c) => c.minutes > 0 || ['Present', 'Late', 'Half Day', 'Working', 'Logged'].includes(c.status)).length,
+        salary,
+        dailyRate: payFor(period.dates[0].slice(0, 7)).pay.rates.daily,
+      };
+    });
+  }, [visibleEmployees, attendanceByEmp, timesheetsByEmp, leaves, workingWeekdays, period, todayStr, nowHHMM]);
+
+  // Team totals for the cards and table footers
+  const totals = useMemo(() => {
+    const byDate = new Map<string, { minutes: number; earned: number }>();
+    let personDays = 0;
+    for (const r of rows) {
+      for (const c of r.cells) {
+        const t = byDate.get(c.date) || { minutes: 0, earned: 0 };
+        t.minutes += c.minutes;
+        t.earned += c.earned;
+        byDate.set(c.date, t);
+        if (c.minutes > 0) personDays += 1;
+      }
+    }
+    const minutes = rows.reduce((s, r) => s + r.minutes, 0);
+    return {
+      minutes,
+      earned: rows.reduce((s, r) => s + r.earned, 0),
+      people: rows.filter((r) => r.daysWorked > 0).length,
+      avgDay: personDays > 0 ? minutes / personDays : 0,
+      byDate,
+    };
+  }, [rows]);
+
+  const noSalaryCount = rows.filter((r) => r.salary <= 0).length;
+  const monthWeeks = useMemo(() => (periodMode === 'monthly' ? weeksOfMonth(anchor.slice(0, 7)) : []), [periodMode, anchor]);
+
+  // Manually logged entries in the period, for editing and deleting
+  const periodLogs = useMemo(() => {
+    const keys = new Set(visibleEmployees.map(empKey));
+    const first = period.dates[0];
+    const last = period.dates[period.dates.length - 1];
+    const list: TimesheetEntry[] = [];
+    for (const [key, byDate] of timesheetsByEmp) {
+      if (!keys.has(key)) continue;
+      for (const [date, logs] of byDate) if (date >= first && date <= last) list.push(...logs);
+    }
+    return newestFirst(list, (t) => t.date);
+  }, [timesheetsByEmp, visibleEmployees, period]);
+
+  const openDay = (date: string) => {
+    setPeriodMode('daily');
+    setAnchor(date);
+  };
+  const openWeek = (date: string) => {
+    setPeriodMode('weekly');
+    setAnchor(date);
+  };
+
+  // Export CSV: one row per employee per day of the period
   const handleExportCSV = () => {
-    if (filteredEntries.length === 0) {
-      showToast('No timesheet records to export.', 'info');
+    const lines = rows.flatMap((r) =>
+      r.cells
+        .filter((c) => c.status !== 'Upcoming')
+        .map((c) => [
+          r.emp.name,
+          r.emp.employeeId || '',
+          c.date,
+          fmt(c.date, { weekday: 'short' }),
+          STATUS_STYLE[c.status].label.replace('● ', ''),
+          c.checkIn || '',
+          c.checkOut || '',
+          c.breakMins ?? '',
+          (c.minutes / 60).toFixed(2),
+          Math.round(c.earned),
+        ])
+    );
+    if (lines.length === 0) {
+      showToast('Nothing to export for this period.', 'info');
       return;
     }
-    const headers = ['Employee Name', 'Employee Code', 'Project Name', 'Task / Description', 'Date', 'Start Time', 'End Time', 'Break (Mins)', 'Hours Worked', 'Billing Status', 'Source'];
-    const rows = filteredEntries.map((rec) => [
-      `"${rec.employeeName}"`,
-      `"${rec.employeeCode || ''}"`,
-      `"${rec.projectName}"`,
-      `"${rec.taskDescription.replace(/"/g, '""')}"`,
-      `"${rec.date}"`,
-      `"${rec.startTime}"`,
-      `"${rec.endTime}"`,
-      rec.breakDurationMinutes,
-      rec.totalHours,
-      rec.isBillable ? '"Billable"' : '"Non-Billable"',
-      `"${rec.source}"`,
-    ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const header = ['Employee', 'Employee ID', 'Date', 'Day', 'Status', 'Check-in', 'Check-out', 'Break (mins)', 'Hours Worked', 'Earned (INR)'];
+    const csv = [header, ...lines].map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `timesheets_${periodMode}_${selectedDate || selectedMonth}.csv`);
+    link.href = url;
+    link.download = `timesheets_${periodMode}_${period.dates[0]}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast(`Exported ${filteredEntries.length} timesheet records.`, 'success');
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${lines.length} rows.`, 'success');
   };
 
   // Modal handlers
@@ -582,9 +654,9 @@ export default function Timesheets() {
 
     setEditingEntry(null);
     setForm({
-      employeeId: activeEmployees[0]?.id || activeEmployees[0]?.employeeId || '',
+      employeeId: employeeFilter !== 'All' ? employeeFilter : activeEmployees[0]?.id || activeEmployees[0]?.employeeId || '',
       projectId: projects[0]?.id || '',
-      date: selectedDate,
+      date: periodMode === 'daily' ? anchor : todayStr,
       taskDescription: '',
       startTime: '09:00',
       endTime: '17:30',
@@ -619,6 +691,8 @@ export default function Timesheets() {
     setErrors({});
   };
 
+  const computedFormHours = calculateDurationHours(form.startTime, form.endTime, Number(form.breakDurationMinutes) || 0);
+
   const validateForm = () => {
     const errs: Record<string, string> = {};
     if (!form.employeeId) errs.employeeId = 'Employee selection is required.';
@@ -627,17 +701,9 @@ export default function Timesheets() {
     if (!form.taskDescription.trim()) errs.taskDescription = 'Work description is required.';
     if (!form.startTime.trim()) errs.startTime = 'Start time is required.';
     if (!form.endTime.trim()) errs.endTime = 'End time is required.';
-
-    const duration = calculateDurationHours(
-      form.startTime,
-      form.endTime,
-      Number(form.breakDurationMinutes) || 0
-    );
-
-    if (duration <= 0) {
+    if (computedFormHours <= 0) {
       errs.endTime = 'End time must be after Start time and result in worked hours > 0.';
     }
-
     return errs;
   };
 
@@ -664,12 +730,6 @@ export default function Timesheets() {
 
     setIsSubmitting(true);
     try {
-      const workedHours = calculateDurationHours(
-        form.startTime,
-        form.endTime,
-        Number(form.breakDurationMinutes) || 0
-      );
-
       const payload: Omit<TimesheetEntry, 'id'> = {
         employeeId: emp.id || emp.employeeId,
         employeeName: emp.name,
@@ -680,7 +740,7 @@ export default function Timesheets() {
         startTime: form.startTime.trim(),
         endTime: form.endTime.trim(),
         breakDurationMinutes: Number(form.breakDurationMinutes) || 0,
-        totalHours: workedHours,
+        totalHours: computedFormHours,
         isBillable: form.isBillable,
         notes: form.notes.trim(),
       };
@@ -717,18 +777,13 @@ export default function Timesheets() {
     }
   };
 
-  const missingDependencyMsg = useMemo(() => {
-    if (activeEmployees.length === 0 && projects.length === 0) {
-      return 'No active employees or projects exist in the system. Please create employees in the Employees module and projects in the Projects module first.';
-    }
-    if (activeEmployees.length === 0) {
-      return 'No active employees exist. Please create employees in the Employees module before logging timesheets.';
-    }
-    if (projects.length === 0) {
-      return 'No projects exist. Please create projects in the Projects module before logging timesheets.';
-    }
-    return null;
-  }, [activeEmployees, projects]);
+  const tabs: { mode: PeriodMode; label: string; icon: ReactNode }[] = [
+    { mode: 'daily', label: 'Day', icon: <Calendar size={14} /> },
+    { mode: 'weekly', label: 'Week', icon: <CalendarRange size={14} /> },
+    { mode: 'monthly', label: 'Month', icon: <CalendarDays size={14} /> },
+  ];
+
+  const periodWord = periodMode === 'daily' ? (anchor === todayStr ? 'today' : 'this day') : `this ${period.noun}`;
 
   return (
     <div style={{ padding: '24px' }}>
@@ -749,7 +804,7 @@ export default function Timesheets() {
             Timesheets
           </div>
           <div style={{ fontSize: 13, color: '#697586', marginTop: 2 }}>
-            Complete employee work details, weekly and monthly hours, and project tasks
+            How long each person worked and how much salary they earned — by day, week or month
           </div>
         </div>
 
@@ -768,894 +823,569 @@ export default function Timesheets() {
             style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
             onClick={handleOpenAddModal}
           >
-            <Plus size={15} /> Log Timesheet
+            <Plus size={15} /> Log Hours
           </button>
         </div>
       </div>
 
-      {/* Dependency Warning */}
-      {missingDependencyMsg && (
-        <div
-          style={{
-            padding: '14px 18px',
-            background: '#FEF2F2',
-            border: '1px solid #FCA5A5',
-            borderRadius: 8,
-            marginBottom: 20,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            color: '#991B1B',
-            fontSize: 13,
-          }}
-        >
-          <AlertCircle size={18} style={{ flexShrink: 0 }} />
-          <div>{missingDependencyMsg}</div>
-        </div>
-      )}
-
-      {/* Summary Cards */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-        <div className="stat-card" style={{ flex: 1, minWidth: 150 }}>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: '#697586',
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              marginBottom: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            <Clock size={14} style={{ color: '#3B5BDB' }} /> Total Hours
-          </div>
-          <div
-            style={{
-              fontSize: 22,
-              fontWeight: 800,
-              color: '#1A1F36',
-              fontFamily: 'Plus Jakarta Sans',
-            }}
-          >
-            {summaryMetrics.totalHours} hrs
-          </div>
+      {/* Period controls */}
+      <div
+        className="card"
+        style={{
+          padding: '12px 16px',
+          marginBottom: 16,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
+        <div style={{ display: 'flex', gap: 4, background: '#F1F5F9', padding: 3, borderRadius: 8 }}>
+          {tabs.map((t) => {
+            const active = periodMode === t.mode;
+            return (
+              <button
+                key={t.mode}
+                type="button"
+                style={{
+                  border: 'none',
+                  padding: '7px 16px',
+                  borderRadius: 6,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: active ? '#FFFFFF' : 'transparent',
+                  color: active ? '#3B5BDB' : '#697586',
+                  boxShadow: active ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+                onClick={() => setPeriodMode(t.mode)}
+              >
+                {t.icon} {t.label}
+              </button>
+            );
+          })}
         </div>
 
-        <div className="stat-card" style={{ flex: 1, minWidth: 150 }}>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: '#697586',
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              marginBottom: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ padding: '6px 8px' }}
+            onClick={() => shiftPeriod(-1)}
+            title={`Previous ${period.noun}`}
           >
-            <DollarSign size={14} style={{ color: '#12B76A' }} /> Billable Hours
+            <ChevronLeft size={16} />
+          </button>
+          <div style={{ minWidth: 150, textAlign: 'center' }}>
+            <div style={{ fontWeight: 700, fontSize: 14.5, color: '#1A1F36' }}>{period.title}</div>
+            {period.sub && <div style={{ fontSize: 12, color: '#64748B' }}>{period.sub}</div>}
           </div>
-          <div
-            style={{
-              fontSize: 22,
-              fontWeight: 800,
-              color: '#12B76A',
-              fontFamily: 'Plus Jakarta Sans',
-            }}
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ padding: '6px 8px' }}
+            onClick={() => shiftPeriod(1)}
+            title={`Next ${period.noun}`}
           >
-            {summaryMetrics.billableHours} hrs
-          </div>
-        </div>
-
-        <div className="stat-card" style={{ flex: 1, minWidth: 150 }}>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: '#697586',
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              marginBottom: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
+            <ChevronRight size={16} />
+          </button>
+          {!periodHasToday && (
+            <button type="button" className="btn-secondary" style={{ padding: '6px 10px', fontSize: 12.5 }} onClick={() => setAnchor(todayStr)}>
+              Back to {periodMode === 'daily' ? 'today' : `this ${period.noun}`}
+            </button>
+          )}
+          {periodMode === 'monthly' ? (
+            <input
+              type="month"
+              className="input-base"
+              style={{ fontSize: 13, width: 150 }}
+              value={anchor.slice(0, 7)}
+              onChange={(e) => e.target.value && setAnchor(`${e.target.value}-01`)}
+              aria-label="Pick a month"
+            />
+          ) : (
+            <input
+              type="date"
+              className="input-base"
+              style={{ fontSize: 13, width: 150 }}
+              value={anchor}
+              onChange={(e) => e.target.value && setAnchor(e.target.value)}
+              aria-label={periodMode === 'weekly' ? 'Pick any day in the week' : 'Pick a day'}
+            />
+          )}
+          <select
+            className="select-base"
+            value={employeeFilter}
+            onChange={(e) => setEmployeeFilter(e.target.value)}
+            style={{ fontSize: 13 }}
+            aria-label="Filter by employee"
           >
-            <CheckCircle2 size={14} style={{ color: '#64748B' }} /> Non-Billable
-          </div>
-          <div
-            style={{
-              fontSize: 22,
-              fontWeight: 800,
-              color: '#64748B',
-              fontFamily: 'Plus Jakarta Sans',
-            }}
-          >
-            {summaryMetrics.nonBillableHours} hrs
-          </div>
-        </div>
-
-        <div className="stat-card" style={{ flex: 1, minWidth: 150 }}>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: '#697586',
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              marginBottom: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            <Users size={14} style={{ color: '#3B5BDB' }} /> Logged Employees
-          </div>
-          <div
-            style={{
-              fontSize: 22,
-              fontWeight: 800,
-              color: '#1A1F36',
-              fontFamily: 'Plus Jakarta Sans',
-            }}
-          >
-            {summaryMetrics.activeEmployees}
-          </div>
-        </div>
-
-        <div className="stat-card" style={{ flex: 1, minWidth: 150 }}>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: '#697586',
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              marginBottom: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            <CalendarDays size={14} style={{ color: '#F59E0B' }} /> Avg Hours / Day
-          </div>
-          <div
-            style={{
-              fontSize: 22,
-              fontWeight: 800,
-              color: '#F59E0B',
-              fontFamily: 'Plus Jakarta Sans',
-            }}
-          >
-            {summaryMetrics.avgHoursPerDay} hrs
-          </div>
+            <option value="All">All employees</option>
+            {activeEmployees.map((e) => (
+              <option key={empKey(e)} value={empKey(e)}>
+                {e.name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      {/* Main Table Card */}
-      <div className="card">
-        {/* Controls Bar */}
-        <div
-          style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid #E5E9F2',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 12,
-          }}
-        >
-          {/* View selector tabs */}
-          <div style={{ display: 'flex', gap: 4, background: '#F1F5F9', padding: 3, borderRadius: 8 }}>
-            <button
-              type="button"
-              style={{
-                border: 'none',
-                padding: '6px 14px',
-                borderRadius: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                background: periodMode === 'daily' ? '#FFFFFF' : 'transparent',
-                color: periodMode === 'daily' ? '#1A1F36' : '#697586',
-                boxShadow: periodMode === 'daily' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-              onClick={() => setPeriodMode('daily')}
-            >
-              <Calendar size={14} /> Daily
-            </button>
-            <button
-              type="button"
-              style={{
-                border: 'none',
-                padding: '6px 14px',
-                borderRadius: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                background: periodMode === 'weekly' ? '#FFFFFF' : 'transparent',
-                color: periodMode === 'weekly' ? '#1A1F36' : '#697586',
-                boxShadow: periodMode === 'weekly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-              onClick={() => setPeriodMode('weekly')}
-            >
-              <CheckSquare size={14} /> Weekly
-            </button>
-            <button
-              type="button"
-              style={{
-                border: 'none',
-                padding: '6px 14px',
-                borderRadius: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                background: periodMode === 'monthly' ? '#FFFFFF' : 'transparent',
-                color: periodMode === 'monthly' ? '#1A1F36' : '#697586',
-                boxShadow: periodMode === 'monthly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-              onClick={() => setPeriodMode('monthly')}
-            >
-              <CalendarDays size={14} /> Monthly
-            </button>
-          </div>
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 10 }}>
+        <StatCard
+          icon={<Clock size={14} style={{ color: '#3B5BDB' }} />}
+          label="Hours worked"
+          value={hrs(totals.minutes)}
+          sub={`by ${totals.people} ${totals.people === 1 ? 'person' : 'people'} ${periodWord}`}
+        />
+        <StatCard
+          icon={<IndianRupee size={14} style={{ color: '#12B76A' }} />}
+          label="Salary earned"
+          value={inr(totals.earned)}
+          sub={periodHasToday ? `earned so far ${periodWord}` : `earned ${periodWord}`}
+          color="#12B76A"
+        />
+        <StatCard
+          icon={<Users size={14} style={{ color: '#7C3AED' }} />}
+          label={periodMode === 'daily' ? 'At work' : 'People who worked'}
+          value={`${totals.people} / ${rows.length}`}
+          sub={periodMode === 'daily' ? 'employees checked in' : `worked at least one day ${periodWord}`}
+        />
+        <StatCard
+          icon={<Timer size={14} style={{ color: '#F59E0B' }} />}
+          label="Average workday"
+          value={hrs(Math.round(totals.avgDay))}
+          sub={`per person, target ${hrs(TARGET_DAY_MINUTES)}`}
+          color={totals.avgDay >= TARGET_DAY_MINUTES ? '#16A34A' : '#F59E0B'}
+        />
+      </div>
 
-          {/* Date Selector & Filters */}
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            {periodMode === 'weekly' ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 8px', fontSize: 12 }}
-                  onClick={() => {
-                    const cur = new Date(selectedDate);
-                    cur.setDate(cur.getDate() - 7);
-                    setSelectedDate(cur.toISOString().split('T')[0]);
-                  }}
-                  title="Previous Week"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <input
-                  type="date"
-                  className="input-base"
-                  style={{ fontSize: 13, width: 140 }}
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 8px', fontSize: 12 }}
-                  onClick={() => {
-                    const cur = new Date(selectedDate);
-                    cur.setDate(cur.getDate() + 7);
-                    setSelectedDate(cur.toISOString().split('T')[0]);
-                  }}
-                  title="Next Week"
-                >
-                  <ChevronRight size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 9px', fontSize: 12 }}
-                  onClick={() => setSelectedDate(todayStr)}
-                >
-                  This Week
-                </button>
-                <span style={{ fontSize: 12, fontWeight: 600, color: '#3B5BDB', background: '#EEF2FF', padding: '4px 8px', borderRadius: 6 }}>
-                  {weekBounds.formattedRange}
-                </span>
-              </div>
-            ) : periodMode === 'monthly' ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 8px', fontSize: 12 }}
-                  onClick={() => {
-                    const [y, m] = selectedMonth.split('-').map(Number);
-                    const prev = new Date(y, m - 2, 1);
-                    setSelectedMonth(prev.toISOString().slice(0, 7));
-                  }}
-                  title="Previous Month"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <input
-                  type="month"
-                  className="input-base"
-                  style={{ fontSize: 13, width: 140 }}
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 8px', fontSize: 12 }}
-                  onClick={() => {
-                    const [y, m] = selectedMonth.split('-').map(Number);
-                    const next = new Date(y, m, 1);
-                    setSelectedMonth(next.toISOString().slice(0, 7));
-                  }}
-                  title="Next Month"
-                >
-                  <ChevronRight size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 9px', fontSize: 12 }}
-                  onClick={() => setSelectedMonth(currentMonthStr)}
-                >
-                  This Month
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 8px', fontSize: 12 }}
-                  onClick={() => {
-                    const cur = new Date(selectedDate);
-                    cur.setDate(cur.getDate() - 1);
-                    setSelectedDate(cur.toISOString().split('T')[0]);
-                  }}
-                  title="Previous Day"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <input
-                  type="date"
-                  className="input-base"
-                  style={{ fontSize: 13, width: 140 }}
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 8px', fontSize: 12 }}
-                  onClick={() => {
-                    const cur = new Date(selectedDate);
-                    cur.setDate(cur.getDate() + 1);
-                    setSelectedDate(cur.toISOString().split('T')[0]);
-                  }}
-                  title="Next Day"
-                >
-                  <ChevronRight size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '5px 9px', fontSize: 12 }}
-                  onClick={() => setSelectedDate(todayStr)}
-                >
-                  Today
-                </button>
-              </div>
-            )}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12, color: '#64748B', marginBottom: 16 }}>
+        <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+        <span>
+          Earnings follow the Payroll rules: monthly salary ÷ working days, minus absent days and late / early / long-lunch time.
+          {noSalaryCount > 0 &&
+            ` ${noSalaryCount} ${noSalaryCount === 1 ? 'employee has' : 'employees have'} no monthly salary set, so they show ₹0 — add it in Employees.`}
+        </span>
+      </div>
 
-            <div style={{ position: 'relative', width: 180 }}>
-              <Search
-                size={14}
-                style={{
-                  position: 'absolute',
-                  left: 10,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: '#697586',
-                }}
-              />
-              <input
-                className="input-base"
-                style={{ paddingLeft: 30, fontSize: 13, width: '100%' }}
-                placeholder="Search..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-
-            <select
-              className="select-base"
-              value={employeeFilter}
-              onChange={(e) => setEmployeeFilter(e.target.value)}
-              style={{ fontSize: 13 }}
-            >
-              <option value="All">All Employees</option>
-              {activeEmployees.map((e) => (
-                <option key={e.id} value={e.id || e.employeeId}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              className="select-base"
-              value={projectFilter}
-              onChange={(e) => setProjectFilter(e.target.value)}
-              style={{ fontSize: 13 }}
-            >
-              <option value="All">All Projects</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              className="select-base"
-              value={billableFilter}
-              onChange={(e) => setBillableFilter(e.target.value)}
-              style={{ fontSize: 13 }}
-            >
-              <option value="All">All Billing</option>
-              <option value="Billable">Billable</option>
-              <option value="Non-Billable">Non-Billable</option>
-            </select>
-          </div>
+      {activeEmployees.length === 0 ? (
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: '#697586' }}>
+          <AlertCircle size={28} style={{ color: '#94A3B8', marginBottom: 8 }} />
+          <div style={{ fontWeight: 600, color: '#1A1F36', fontSize: 15 }}>No active employees</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Add employees in the Employees module to see their hours and earnings here.</div>
         </div>
-
-        {/* WEEKLY EMPLOYEE WORK MATRIX (Rendered when in Weekly mode) */}
-        {periodMode === 'weekly' && (
-          <div style={{ borderBottom: '1px solid #E5E9F2', paddingBottom: 16 }}>
-            <div style={{ padding: '14px 18px', background: '#F8FAFC', borderBottom: '1px solid #E5E9F2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 14.5, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <BarChart2 size={16} style={{ color: '#3B5BDB' }} />
-                  Weekly Employee Hours & Deliverables Summary
-                </div>
-                <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                  Daily hours (Mon–Sun), weekly total hours worked, projects, and task completions
-                </div>
-              </div>
-              <div style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
-                {weeklyEmployeeMatrix.filter(m => m.totalWeekHours > 0).length} of {weeklyEmployeeMatrix.length} employees active
-              </div>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table-base">
-                <thead>
-                  <tr style={{ background: '#F8FAFC' }}>
-                    <th>EMPLOYEE</th>
-                    {weekBounds.days.map((d) => (
-                      <th key={d.dateStr} style={{ textAlign: 'center', minWidth: 64, background: d.isToday ? '#EEF2FF' : undefined }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: d.isToday ? '#3B5BDB' : '#475569' }}>{d.dayName}</div>
-                        <div style={{ fontSize: 10.5, fontWeight: 500, color: d.isToday ? '#3B5BDB' : '#64748B' }}>{d.dateStr.slice(8)}/{d.dateStr.slice(5, 7)}</div>
-                      </th>
-                    ))}
-                    <th style={{ textAlign: 'right', minWidth: 85 }}>WEEK HOURS</th>
-                    <th>PROJECTS & DELIVERABLES</th>
-                    <th style={{ textAlign: 'center' }}>STATUS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {weeklyEmployeeMatrix.map((m) => {
-                    const empInitials = (m.employee.name || '')
-                      .split(' ')
-                      .map((n) => n[0])
-                      .join('')
-                      .slice(0, 2)
-                      .toUpperCase() || 'EM';
-
-                    return (
-                      <tr key={m.empIdStr}>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div
-                              style={{
-                                width: 32,
-                                height: 32,
-                                borderRadius: '50%',
-                                background: '#EEF2FF',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: '#3B5BDB',
-                                flexShrink: 0,
-                              }}
-                            >
-                              {empInitials}
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#1E293B' }}>{m.employee.name}</div>
-                              <div style={{ fontSize: 11, color: '#64748B' }}>
-                                {m.employee.role || 'Employee'} {m.employee.employeeId ? `· ${m.employee.employeeId}` : ''}
+      ) : (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          {/* DAY VIEW: one row per employee */}
+          {periodMode === 'daily' && (
+            <>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      <th>EMPLOYEE</th>
+                      <th>STATUS</th>
+                      <th>IN → OUT</th>
+                      <th>BREAK</th>
+                      <th>HOURS WORKED</th>
+                      <th style={{ textAlign: 'right' }}>EARNED</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => {
+                      const c = r.cells[0];
+                      const s = STATUS_STYLE[c.status];
+                      const hasTimes = !!c.checkIn;
+                      return (
+                        <tr key={r.key}>
+                          <td>
+                            <EmployeeCell emp={r.emp} />
+                          </td>
+                          <td>
+                            <span className={`badge ${s.badge}`}>{s.label}</span>
+                            {c.missingCheckout && (
+                              <div style={{ fontSize: 11, color: '#B45309', marginTop: 3 }} title={`Counted until ${formatTime12h(WORK_END)}`}>
+                                No check-out recorded
                               </div>
+                            )}
+                          </td>
+                          <td style={{ fontSize: 13, color: hasTimes ? '#1A1F36' : '#94A3B8', whiteSpace: 'nowrap' }}>
+                            {hasTimes ? (
+                              <>
+                                {formatTime12h(c.checkIn)} → {c.checkOut ? formatTime12h(c.checkOut) : c.status === 'Working' ? 'now' : '—'}
+                              </>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td style={{ fontSize: 13, color: '#64748B' }}>{c.breakMins ? formatDuration(c.breakMins) : '—'}</td>
+                          <td>
+                            <HoursBar minutes={c.minutes} />
+                          </td>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <div style={{ fontWeight: 800, fontSize: 14.5, color: c.earned > 0 ? '#12B76A' : '#94A3B8' }}>{inr(c.earned)}</div>
+                            <div style={{ fontSize: 11, color: '#64748B' }}>
+                              {r.salary > 0 ? `of ${inr(r.dailyRate)} / day` : 'No salary set'}
                             </div>
-                          </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={footCell}>Team total</td>
+                      <td style={footCell}>
+                        <span style={{ fontWeight: 600, fontSize: 12.5, color: '#475569' }}>
+                          {totals.people} of {rows.length} worked
+                        </span>
+                      </td>
+                      <td style={footCell} />
+                      <td style={footCell} />
+                      <td style={{ ...footCell, fontSize: 14.5 }}>{hrs(totals.minutes)}</td>
+                      <td style={{ ...footCell, textAlign: 'right', fontSize: 15, color: '#12B76A' }}>{inr(totals.earned)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <Legend />
+            </>
+          )}
+
+          {/* WEEK VIEW: Mon–Sun grid, each cell shows hours and earnings for that day */}
+          {periodMode === 'weekly' && (
+            <>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      <th style={stickyHead}>EMPLOYEE</th>
+                      {period.dates.map((d) => {
+                        const isToday = d === todayStr;
+                        return (
+                          <th key={d} style={{ textAlign: 'center', minWidth: 84, background: isToday ? '#EEF2FF' : undefined }}>
+                            <div style={{ fontSize: 11.5, fontWeight: 700, color: isToday ? '#3B5BDB' : '#475569' }}>
+                              {fmt(d, { weekday: 'short' }).toUpperCase()}
+                            </div>
+                            <div style={{ fontSize: 11, fontWeight: 500, color: isToday ? '#3B5BDB' : '#64748B' }}>
+                              {fmt(d, { day: 'numeric', month: 'short' })}
+                            </div>
+                          </th>
+                        );
+                      })}
+                      <th style={{ textAlign: 'right', minWidth: 100 }}>WEEK HOURS</th>
+                      <th style={{ textAlign: 'right', minWidth: 100 }}>WEEK EARNED</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.key}>
+                        <td style={stickyCol}>
+                          <EmployeeCell emp={r.emp} />
                         </td>
-                        {weekBounds.days.map((d) => {
-                          const hrs = m.dayHours[d.dateStr] || 0;
+                        {r.cells.map((c) => {
+                          const isToday = c.date === todayStr;
+                          const tone = hoursTone(c.minutes);
+                          const s = STATUS_STYLE[c.status];
                           return (
-                            <td
-                              key={d.dateStr}
-                              style={{
-                                textAlign: 'center',
-                                background: d.isToday ? '#F8FAFC' : undefined,
-                                fontWeight: hrs > 0 ? 600 : 400,
-                                color: hrs > 0 ? '#1E293B' : '#94A3B8',
-                                fontSize: 13,
-                              }}
-                            >
-                              {hrs > 0 ? (
-                                <span
-                                  style={{
-                                    display: 'inline-block',
-                                    padding: '3px 7px',
-                                    borderRadius: 6,
-                                    background: hrs >= 8 ? '#ECFDF5' : '#F1F5F9',
-                                    color: hrs >= 8 ? '#059669' : '#334155',
-                                    fontSize: 12,
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  {hrs}h
-                                </span>
-                              ) : (
-                                '—'
-                              )}
+                            <td key={c.date} style={{ textAlign: 'center', padding: '8px 6px', background: isToday ? '#F8FAFF' : undefined }}>
+                              <button
+                                type="button"
+                                onClick={() => openDay(c.date)}
+                                title={`${fmt(c.date, { weekday: 'long', day: 'numeric', month: 'short' })} · ${s.label.replace('● ', '')} — click for details`}
+                                style={{
+                                  width: '100%',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: 3,
+                                }}
+                              >
+                                {c.minutes > 0 ? (
+                                  <span
+                                    style={{
+                                      display: 'inline-block',
+                                      padding: '3px 8px',
+                                      borderRadius: 6,
+                                      background: tone.bg,
+                                      color: tone.fg,
+                                      fontSize: 12.5,
+                                      fontWeight: 700,
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {hrs(c.minutes)}
+                                  </span>
+                                ) : (
+                                  <span
+                                    style={{
+                                      fontSize: 11.5,
+                                      fontWeight: 600,
+                                      color: c.status === 'Absent' ? '#DC2626' : c.status === 'On Leave' ? '#7C3AED' : '#94A3B8',
+                                    }}
+                                  >
+                                    {s.short}
+                                  </span>
+                                )}
+                                {c.earned > 0 && <span style={{ fontSize: 11, color: '#12B76A', fontWeight: 600 }}>{inr(c.earned)}</span>}
+                              </button>
                             </td>
                           );
                         })}
-                        <td style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 800, fontSize: 14.5, color: m.totalWeekHours >= 40 ? '#16A34A' : '#3B5BDB' }}>
-                            {m.totalWeekHours} hrs
-                          </div>
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <div style={{ fontWeight: 800, fontSize: 14.5, color: '#1A1F36' }}>{hrs(r.minutes)}</div>
                           <div style={{ fontSize: 11, color: '#64748B' }}>
-                            {m.daysPresent} day{m.daysPresent === 1 ? '' : 's'} worked
+                            {r.daysWorked} day{r.daysWorked === 1 ? '' : 's'} worked
                           </div>
                         </td>
-                        <td>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 280 }}>
-                            {m.projectsWorked.length > 0 ? (
-                              m.projectsWorked.map((p) => (
-                                <span
-                                  key={p}
-                                  style={{
-                                    fontSize: 11,
-                                    padding: '2px 7px',
-                                    borderRadius: 4,
-                                    background: '#F1F5F9',
-                                    color: '#334155',
-                                    fontWeight: 500,
-                                  }}
-                                  title={p}
-                                >
-                                  {p}
-                                </span>
-                              ))
-                            ) : (
-                              <span style={{ fontSize: 11, color: '#94A3B8' }}>General operations</span>
-                            )}
-                          </div>
-                          {m.completedTasksCount > 0 && (
-                            <div style={{ fontSize: 11, color: '#16A34A', fontWeight: 600, marginTop: 3 }}>
-                              ✓ {m.completedTasksCount} task{m.completedTasksCount === 1 ? '' : 's'} done this week
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ textAlign: 'center' }}>
-                          {m.totalWeekHours >= 40 ? (
-                            <span className="badge badge-green">✓ 40h+ Completed</span>
-                          ) : m.totalWeekHours >= 30 ? (
-                            <span className="badge badge-blue">On Track ({m.totalWeekHours}h)</span>
-                          ) : m.totalWeekHours > 0 ? (
-                            <span className="badge badge-amber">{m.totalWeekHours}h Logged</span>
-                          ) : (
-                            <span className="badge badge-gray">No Activity</span>
-                          )}
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <div style={{ fontWeight: 800, fontSize: 14.5, color: r.earned > 0 ? '#12B76A' : '#94A3B8' }}>{inr(r.earned)}</div>
+                          {r.salary <= 0 && <div style={{ fontSize: 11, color: '#64748B' }}>No salary set</div>}
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={{ ...footCell, ...stickyCol, background: '#F8F9FC' }}>Team total</td>
+                      {period.dates.map((d) => {
+                        const t = totals.byDate.get(d);
+                        return (
+                          <td key={d} style={{ ...footCell, textAlign: 'center', padding: '8px 6px' }}>
+                            <div style={{ fontSize: 12.5 }}>{t && t.minutes > 0 ? hrs(t.minutes) : '—'}</div>
+                            {t && t.earned > 0 && <div style={{ fontSize: 11, color: '#12B76A' }}>{inr(t.earned)}</div>}
+                          </td>
+                        );
+                      })}
+                      <td style={{ ...footCell, textAlign: 'right', fontSize: 14.5 }}>{hrs(totals.minutes)}</td>
+                      <td style={{ ...footCell, textAlign: 'right', fontSize: 15, color: '#12B76A' }}>{inr(totals.earned)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <Legend hint="Click any day to see check-in / check-out details" />
+            </>
+          )}
 
-        {/* MONTHLY EMPLOYEE MATRIX (Rendered when in Monthly mode) */}
-        {periodMode === 'monthly' && (
-          <div style={{ borderBottom: '1px solid #E5E9F2', paddingBottom: 16 }}>
-            <div style={{ padding: '14px 18px', background: '#F8FAFC', borderBottom: '1px solid #E5E9F2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 14.5, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Layers size={16} style={{ color: '#F59E0B' }} />
-                  Monthly Employee Performance & Work Breakdown ({new Date(`${selectedMonth}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })})
-                </div>
-                <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                  Monthly hours worked, days present, billable project contributions, and deliverable counts
-                </div>
+          {/* MONTH VIEW: week-by-week hours and earnings, plus month totals */}
+          {periodMode === 'monthly' && (
+            <>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      <th style={stickyHead}>EMPLOYEE</th>
+                      {monthWeeks.map((w, i) => (
+                        <th key={w.start} style={{ textAlign: 'center', minWidth: 96 }}>
+                          <div style={{ fontSize: 11.5, fontWeight: 700, color: '#475569' }}>WEEK {i + 1}</div>
+                          <div style={{ fontSize: 11, fontWeight: 500, color: '#64748B' }}>
+                            {fmt(w.start, { day: 'numeric' })}
+                            {w.end !== w.start ? `–${fmt(w.end, { day: 'numeric' })}` : ''} {fmt(w.start, { month: 'short' })}
+                          </div>
+                        </th>
+                      ))}
+                      <th style={{ textAlign: 'right', minWidth: 110 }}>MONTH HOURS</th>
+                      <th style={{ textAlign: 'right', minWidth: 110 }}>EARNED</th>
+                      <th style={{ minWidth: 170 }}>OF MONTHLY SALARY</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => {
+                      const byDate = new Map(r.cells.map((c) => [c.date, c]));
+                      const pct = r.salary > 0 ? Math.min(100, (r.earned / r.salary) * 100) : 0;
+                      return (
+                        <tr key={r.key}>
+                          <td style={stickyCol}>
+                            <EmployeeCell emp={r.emp} />
+                          </td>
+                          {monthWeeks.map((w) => {
+                            const wc = w.dates.map((d) => byDate.get(d)).filter((c): c is DayCell => !!c);
+                            const mins = wc.reduce((s, c) => s + c.minutes, 0);
+                            const earned = wc.reduce((s, c) => s + c.earned, 0);
+                            const future = w.start > todayStr;
+                            return (
+                              <td key={w.start} style={{ textAlign: 'center', padding: '8px 6px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => openWeek(w.start)}
+                                  title="Open this week day by day"
+                                  style={{
+                                    width: '100%',
+                                    border: 'none',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    gap: 2,
+                                  }}
+                                >
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: mins > 0 ? '#1A1F36' : '#94A3B8' }}>
+                                    {mins > 0 ? hrs(mins) : future ? '' : '—'}
+                                  </span>
+                                  {earned > 0 && <span style={{ fontSize: 11, color: '#12B76A', fontWeight: 600 }}>{inr(earned)}</span>}
+                                </button>
+                              </td>
+                            );
+                          })}
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <div style={{ fontWeight: 800, fontSize: 14.5, color: '#1A1F36' }}>{hrs(r.minutes)}</div>
+                            <div style={{ fontSize: 11, color: '#64748B' }}>
+                              {r.daysWorked} day{r.daysWorked === 1 ? '' : 's'} worked
+                            </div>
+                          </td>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <div style={{ fontWeight: 800, fontSize: 14.5, color: r.earned > 0 ? '#12B76A' : '#94A3B8' }}>{inr(r.earned)}</div>
+                            {periodHasToday && r.earned > 0 && <div style={{ fontSize: 11, color: '#64748B' }}>so far</div>}
+                          </td>
+                          <td>
+                            {r.salary > 0 ? (
+                              <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 5 }}>
+                                  <span style={{ fontWeight: 700, color: '#1A1F36' }}>{Math.round(pct)}%</span>
+                                  <span style={{ color: '#64748B' }}>of {inr(r.salary)}</span>
+                                </div>
+                                <div style={{ height: 6, borderRadius: 99, background: '#EEF2F7', overflow: 'hidden' }}>
+                                  <div style={{ width: `${pct}%`, height: '100%', borderRadius: 99, background: '#12B76A' }} />
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 12, color: '#94A3B8' }}>No salary set</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={{ ...footCell, ...stickyCol, background: '#F8F9FC' }}>Team total</td>
+                      {monthWeeks.map((w) => {
+                        const mins = w.dates.reduce((s, d) => s + (totals.byDate.get(d)?.minutes || 0), 0);
+                        const earned = w.dates.reduce((s, d) => s + (totals.byDate.get(d)?.earned || 0), 0);
+                        return (
+                          <td key={w.start} style={{ ...footCell, textAlign: 'center', padding: '8px 6px' }}>
+                            <div style={{ fontSize: 12.5 }}>{mins > 0 ? hrs(mins) : '—'}</div>
+                            {earned > 0 && <div style={{ fontSize: 11, color: '#12B76A' }}>{inr(earned)}</div>}
+                          </td>
+                        );
+                      })}
+                      <td style={{ ...footCell, textAlign: 'right', fontSize: 14.5 }}>{hrs(totals.minutes)}</td>
+                      <td style={{ ...footCell, textAlign: 'right', fontSize: 15, color: '#12B76A' }}>{inr(totals.earned)}</td>
+                      <td style={footCell} />
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
-              <div style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
-                {monthlyEmployeeSummary.filter(m => m.totalMonthHours > 0).length} of {monthlyEmployeeSummary.length} employees worked
+              <div style={{ padding: '10px 16px', borderTop: '1px solid #E5E9F2', fontSize: 12, color: '#64748B', textAlign: 'right' }}>
+                Click any week to see it day by day
               </div>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Manually logged hours (collapsed): only needed to fix or remove an entry */}
+      {periodLogs.length > 0 && (
+        <div className="card" style={{ marginTop: 16, overflow: 'hidden' }}>
+          <button
+            type="button"
+            onClick={() => setShowLogs((v) => !v)}
+            style={{
+              width: '100%',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              padding: '12px 16px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              fontFamily: 'inherit',
+            }}
+          >
+            <span style={{ fontWeight: 700, fontSize: 13.5, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Edit3 size={14} style={{ color: '#3B5BDB' }} />
+              Manually logged hours ({periodLogs.length})
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748B' }}>
+              {showLogs ? 'Hide' : 'Show to edit or delete'}
+              <ChevronDown size={15} style={{ transform: showLogs ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+            </span>
+          </button>
+          {showLogs && (
+            <div style={{ overflowX: 'auto', borderTop: '1px solid #E5E9F2' }}>
               <table className="table-base">
                 <thead>
-                  <tr style={{ background: '#F8FAFC' }}>
+                  <tr>
                     <th>EMPLOYEE</th>
-                    <th style={{ textAlign: 'center' }}>DAYS WORKED</th>
-                    <th style={{ textAlign: 'right' }}>MONTHLY HOURS</th>
-                    <th style={{ textAlign: 'right' }}>BILLABLE HOURS</th>
-                    <th style={{ textAlign: 'right' }}>AVG HOURS / DAY</th>
-                    <th>PROJECTS CONTRIBUTED</th>
-                    <th style={{ textAlign: 'center' }}>DELIVERABLES</th>
-                    <th style={{ textAlign: 'center' }}>STATUS</th>
+                    <th>DATE</th>
+                    <th>TIME</th>
+                    <th>BREAK</th>
+                    <th style={{ textAlign: 'right' }}>HOURS</th>
+                    <th style={{ textAlign: 'right' }}>ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {monthlyEmployeeSummary.map((m) => {
-                    const empInitials = (m.employee.name || '')
-                      .split(' ')
-                      .map((n) => n[0])
-                      .join('')
-                      .slice(0, 2)
-                      .toUpperCase() || 'EM';
-
-                    return (
-                      <tr key={m.empIdStr}>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div
-                              style={{
-                                width: 32,
-                                height: 32,
-                                borderRadius: '50%',
-                                background: '#EEF2FF',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: '#3B5BDB',
-                                flexShrink: 0,
-                              }}
-                            >
-                              {empInitials}
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#1E293B' }}>{m.employee.name}</div>
-                              <div style={{ fontSize: 11, color: '#64748B' }}>
-                                {m.employee.role || 'Employee'} {m.employee.employeeId ? `· ${m.employee.employeeId}` : ''}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'center', fontWeight: 600, fontSize: 13 }}>
-                          {m.daysPresent} day{m.daysPresent === 1 ? '' : 's'}
-                        </td>
-                        <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 14.5, color: '#1A1F36' }}>
-                          {m.totalMonthHours} hrs
-                        </td>
-                        <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 13.5, color: '#12B76A' }}>
-                          {m.billableHours} hrs
-                        </td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, fontSize: 13, color: '#64748B' }}>
-                          {m.avgDaily} hrs/day
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 260 }}>
-                            {m.projectsWorked.length > 0 ? (
-                              m.projectsWorked.map((p) => (
-                                <span
-                                  key={p}
-                                  style={{
-                                    fontSize: 11,
-                                    padding: '2px 7px',
-                                    borderRadius: 4,
-                                    background: '#F1F5F9',
-                                    color: '#334155',
-                                    fontWeight: 500,
-                                  }}
-                                >
-                                  {p}
-                                </span>
-                              ))
-                            ) : (
-                              <span style={{ fontSize: 11, color: '#94A3B8' }}>General operations</span>
-                            )}
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'center' }}>
-                          {m.deliverablesCount > 0 ? (
-                            <span className="badge badge-purple">{m.deliverablesCount} items</span>
-                          ) : (
-                            <span style={{ fontSize: 12, color: '#94A3B8' }}>—</span>
-                          )}
-                        </td>
-                        <td style={{ textAlign: 'center' }}>
-                          {m.totalMonthHours >= 160 ? (
-                            <span className="badge badge-green">Full Target</span>
-                          ) : m.totalMonthHours > 0 ? (
-                            <span className="badge badge-blue">Active</span>
-                          ) : (
-                            <span className="badge badge-gray">No Hours</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Detailed Timesheets Table */}
-        <div style={{ padding: '14px 18px', background: '#FFFFFF', borderBottom: '1px solid #E5E9F2', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Clock size={15} style={{ color: '#3B5BDB' }} />
-            Detailed Work & Task Entries ({filteredEntries.length} record{filteredEntries.length === 1 ? '' : 's'})
-          </div>
-          <div style={{ fontSize: 12, color: '#64748B' }}>
-            Auto-synchronized with employee attendance & assigned tasks
-          </div>
-        </div>
-
-        <div style={{ overflowX: 'auto' }}>
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th>EMPLOYEE</th>
-                <th>PROJECT</th>
-                <th>TASK / DESCRIPTION</th>
-                <th>DATE</th>
-                <th>START - END</th>
-                <th>BREAK</th>
-                <th style={{ textAlign: 'right' }}>HOURS</th>
-                <th>BILLING</th>
-                <th style={{ textAlign: 'right' }}>ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredEntries.length === 0 ? (
-                <tr>
-                  <td colSpan={9} style={{ textAlign: 'center', padding: '40px 20px', color: '#697586' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                      <Clock size={32} style={{ color: '#94A3B8' }} />
-                      <div style={{ fontWeight: 600, color: '#1A1F36', fontSize: 15 }}>
-                        No Work Records Found
-                      </div>
-                      <div style={{ fontSize: 13, maxWidth: 420 }}>
-                        No employee attendance or timesheet records match the selected period and filters.
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredEntries.map((rec) => {
-                  const initials = (rec.employeeName || '')
-                    .split(' ')
-                    .map((n) => n[0])
-                    .join('')
-                    .slice(0, 2)
-                    .toUpperCase() || 'EM';
-
-                  return (
-                    <tr key={rec.id}>
+                  {periodLogs.map((t) => (
+                    <tr key={String(t.id)}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: '50%',
-                              background: '#EEF2FF',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 12,
-                              fontWeight: 700,
-                              color: '#3B5BDB',
-                              flexShrink: 0,
-                            }}
-                          >
-                            {initials}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: 13.5 }}>{rec.employeeName}</div>
-                            {rec.employeeCode && (
-                              <div style={{ fontSize: 11, color: '#64748B' }}>{rec.employeeCode}</div>
-                            )}
-                          </div>
+                          <Avatar name={t.employeeName} />
+                          <span style={{ fontWeight: 600, fontSize: 13.5 }}>{t.employeeName}</span>
                         </div>
                       </td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Briefcase size={14} style={{ color: '#3B5BDB' }} />
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{rec.projectName}</span>
-                        </div>
-                        {rec.source === 'attendance' ? (
-                          <span style={{ fontSize: 10, color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
-                            <span style={{ color: '#16A34A' }}>●</span> Attendance Auto-Sync
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: 10, color: '#3B5BDB', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
-                            <span style={{ color: '#3B5BDB' }}>●</span> Manual Log
-                          </span>
-                        )}
+                      <td style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{fmt(normDate(t.date), { weekday: 'short', day: 'numeric', month: 'short' })}</td>
+                      <td style={{ fontSize: 13, color: '#475569', whiteSpace: 'nowrap' }}>
+                        {formatTime12h(t.startTime)} → {formatTime12h(t.endTime)}
                       </td>
-                      <td style={{ fontSize: 13, color: '#1A1F36', maxWidth: 260 }}>
-                        <div style={{ fontWeight: 500 }}>{rec.taskDescription}</div>
-                      </td>
-                      <td style={{ fontSize: 12.5, color: '#697586' }}>{rec.date}</td>
-                      <td style={{ fontSize: 12.5, color: '#697586' }}>
-                        {rec.startTime} – {rec.endTime}
-                      </td>
-                      <td style={{ fontSize: 12.5, color: '#697586' }}>
-                        {rec.breakDurationMinutes ? `${rec.breakDurationMinutes}m` : '0m'}
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 13.5, color: '#1A1F36' }}>
-                        {rec.totalHours} hrs
-                      </td>
-                      <td>
-                        <span className={`badge ${rec.isBillable ? 'badge-green' : 'badge-gray'}`}>
-                          {rec.isBillable ? 'Billable' : 'Operational'}
-                        </span>
-                      </td>
+                      <td style={{ fontSize: 13, color: '#64748B' }}>{t.breakDurationMinutes ? formatDuration(t.breakDurationMinutes) : '—'}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{hrs(Math.round((Number(t.totalHours) || 0) * 60))}</td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                           <button
                             type="button"
                             className="btn-secondary"
                             style={{ fontSize: 11.5, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
-                            onClick={() => handleOpenLogForEntry(rec)}
-                            title="Edit or log official timesheet entry"
+                            onClick={() => handleOpenEditModal(t)}
                           >
-                            <Edit3 size={12} /> {rec.source === 'manual' ? 'Edit' : 'Adjust'}
+                            <Edit3 size={12} /> Edit
                           </button>
-                          {rec.source === 'manual' && rec.rawTimesheet && (
-                            <button
-                              type="button"
-                              className="btn-secondary"
-                              style={{
-                                fontSize: 11.5,
-                                padding: '4px 8px',
-                                color: '#EF4444',
-                                borderColor: '#FCA5A5',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 4,
-                              }}
-                              onClick={() => setEntryToDelete(rec.rawTimesheet!)}
-                            >
-                              <Trash2 size={12} /> Delete
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{
+                              fontSize: 11.5,
+                              padding: '4px 8px',
+                              color: '#EF4444',
+                              borderColor: '#FCA5A5',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                            }}
+                            onClick={() => setEntryToDelete(t)}
+                          >
+                            <Trash2 size={12} /> Delete
+                          </button>
                         </div>
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Log / Edit Timesheet Modal */}
       {showModal && (
@@ -1663,7 +1393,7 @@ export default function Timesheets() {
           <div className="modal-box" style={{ width: 560, padding: 26 }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
               <div style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 700, fontSize: 16.5 }}>
-                {editingEntry ? 'Edit Timesheet Entry' : 'Log New Timesheet Entry'}
+                {editingEntry ? 'Edit Logged Hours' : 'Log Hours'}
               </div>
               <button
                 type="button"
@@ -1691,7 +1421,7 @@ export default function Timesheets() {
                     }}
                   >
                     {activeEmployees.map((emp) => (
-                      <option key={emp.id} value={emp.id || emp.employeeId}>
+                      <option key={empKey(emp)} value={emp.id || emp.employeeId}>
                         {emp.name}{emp.role ? ` (${emp.role})` : ''}
                       </option>
                     ))}
@@ -1883,7 +1613,7 @@ export default function Timesheets() {
                   Cancel
                 </button>
                 <button type="submit" className="btn-primary" disabled={isSubmitting}>
-                  {isSubmitting ? 'Saving...' : editingEntry ? 'Update Entry' : 'Save Timesheet'}
+                  {isSubmitting ? 'Saving...' : editingEntry ? 'Update Entry' : 'Save Hours'}
                 </button>
               </div>
             </form>
@@ -1895,11 +1625,11 @@ export default function Timesheets() {
       {entryToDelete && (
         <DeleteConfirmationModal
           isOpen={!!entryToDelete}
-          title="Delete Timesheet Entry"
-          itemName={`${entryToDelete.employeeName} - ${entryToDelete.taskDescription}`}
+          title="Delete Logged Hours"
+          itemName={`${entryToDelete.employeeName} - ${entryToDelete.date}`}
           description={
             <>
-              Are you sure you want to delete timesheet entry for <strong style={{ color: '#1A1F36' }}>{entryToDelete.employeeName}</strong> ({entryToDelete.totalHours} hrs on {entryToDelete.date})? This action will permanently remove the record from Firestore.
+              Are you sure you want to delete the hours logged for <strong style={{ color: '#1A1F36' }}>{entryToDelete.employeeName}</strong> ({entryToDelete.totalHours} hrs on {entryToDelete.date})? This action will permanently remove the record from Firestore.
             </>
           }
           isDeleting={isDeleting}
