@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Employee, type Project, type TimesheetEntry } from '../db/database';
+import { db, type Employee, type Project, type TimesheetEntry, type AttendanceRecord, type ProjectTask, type Deliverable } from '../db/database';
 import { newestFirst } from '../utils/sort';
 import {
   getAllTimesheets,
@@ -8,6 +8,7 @@ import {
   updateTimesheet,
   deleteTimesheet,
 } from '../services/timesheetService';
+import { getAllAttendance } from '../services/attendanceService';
 import { useToast } from '../context/ToastContext';
 import {
   Clock,
@@ -24,10 +25,37 @@ import {
   CalendarDays,
   AlertCircle,
   CheckSquare,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  BarChart2,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
+import { workedMinutes, lunchMinutes, toHHMM } from '../utils/attendanceTimes';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 
 type PeriodMode = 'daily' | 'weekly' | 'monthly';
+
+export interface UnifiedWorkEntry {
+  id: string;
+  employeeId: string | number;
+  employeeName: string;
+  employeeCode?: string;
+  projectId: string | number;
+  projectName: string;
+  date: string;
+  taskDescription: string;
+  startTime: string;
+  endTime: string;
+  breakDurationMinutes: number;
+  totalHours: number;
+  isBillable: boolean;
+  status: string;
+  source: 'manual' | 'attendance' | 'task';
+  rawTimesheet?: TimesheetEntry;
+  rawAttendance?: AttendanceRecord;
+}
 
 interface FormState {
   employeeId: string | number;
@@ -94,7 +122,7 @@ export default function Timesheets() {
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
   const currentMonthStr = useMemo(() => new Date().toISOString().slice(0, 7), []);
 
-  const [periodMode, setPeriodMode] = useState<PeriodMode>('daily');
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('weekly');
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
 
@@ -125,57 +153,206 @@ export default function Timesheets() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Synchronize from Firestore on mount
+  // Synchronize from Firestore on mount: both manual timesheets and employee attendance records
   useEffect(() => {
     getAllTimesheets().catch((err) => {
       console.warn('Initial timesheets fetch error:', err);
+    });
+    getAllAttendance().catch((err) => {
+      console.warn('Initial attendance fetch error:', err);
     });
   }, []);
 
   // Live queries from Dexie cache
   const employees = useLiveQuery(() => db.employees.toArray(), []) || [];
   const projects = useLiveQuery(() => db.projects.toArray(), []) || [];
+  const attendanceRecords = useLiveQuery(() => db.attendance.toArray(), []) || [];
+  const tasks = useLiveQuery(() => db.tasks.toArray(), []) || [];
+  const deliverables = useLiveQuery(() => db.deliverables.toArray(), []) || [];
   const timesheetRecords = useLiveQuery(async () => newestFirst(await db.timesheets.toArray(), (t) => t.date), []) || [];
 
   const activeEmployees = useMemo(() => {
     return employees.filter((e) => e.status !== 'Inactive');
   }, [employees]);
 
-  // Calculated duration for modal form
-  const computedFormHours = useMemo(() => {
-    return calculateDurationHours(
-      form.startTime,
-      form.endTime,
-      Number(form.breakDurationMinutes) || 0
-    );
-  }, [form.startTime, form.endTime, form.breakDurationMinutes]);
+  // Calculate Monday to Sunday week range & day objects for the selectedDate
+  const weekBounds = useMemo(() => {
+    const target = new Date(selectedDate);
+    const validTarget = isNaN(target.getTime()) ? new Date() : target;
+    const day = validTarget.getDay(); // 0 is Sun, 1 is Mon...
+    const diffToMon = validTarget.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(validTarget);
+    monday.setDate(diffToMon);
 
-  // Filter entries based on PeriodMode and selected date/month
+    const days: { dateStr: string; dayName: string; dayShort: string; isToday: boolean }[] = [];
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    for (let i = 0; i < 7; i++) {
+      const cur = new Date(monday);
+      cur.setDate(monday.getDate() + i);
+      const iso = cur.toISOString().split('T')[0];
+      days.push({
+        dateStr: iso,
+        dayName: dayNames[i],
+        dayShort: `${dayNames[i]} ${cur.getDate()}/${cur.getMonth() + 1}`,
+        isToday: iso === todayStr,
+      });
+    }
+
+    const monStr = days[0].dateStr;
+    const sunStr = days[6].dateStr;
+    const formattedRange = `${new Date(monStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${new Date(sunStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+
+    return { monStr, sunStr, days, formattedRange };
+  }, [selectedDate, todayStr]);
+
+  // Unified work entries: combines manually logged timesheets with attendance work logs & task activity
+  const unifiedEntries = useMemo(() => {
+    const list: UnifiedWorkEntry[] = [];
+    const manualKeys = new Set<string>();
+
+    // 1. Include manually logged timesheets from db.timesheets
+    timesheetRecords.forEach((t) => {
+      const key = `${t.employeeId}_${t.date}`;
+      manualKeys.add(key);
+      list.push({
+        id: `TS-${t.id}`,
+        employeeId: t.employeeId,
+        employeeName: t.employeeName,
+        projectId: t.projectId,
+        projectName: t.projectName,
+        date: t.date,
+        taskDescription: t.taskDescription || 'Logged Project Work',
+        startTime: t.startTime || '09:00',
+        endTime: t.endTime || '17:30',
+        breakDurationMinutes: t.breakDurationMinutes ?? 30,
+        totalHours: Number(t.totalHours) || 0,
+        isBillable: t.isBillable ?? true,
+        status: 'Logged',
+        source: 'manual',
+        rawTimesheet: t,
+      });
+    });
+
+    // 2. Synthesize work entries from employee attendance records (without needing manual log)
+    attendanceRecords.forEach((att) => {
+      // Exclude absent or on-leave
+      if (att.status === 'Absent' || att.status === 'On Leave') return;
+
+      let attDate = (att.date || '').trim();
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(attDate)) {
+        attDate = attDate.split('/').reverse().join('-');
+      }
+      if (!attDate) return;
+
+      const emp = activeEmployees.find(
+        (e) =>
+          (att.employeeId && String(e.id) === String(att.employeeId)) ||
+          (att.employeeCode && String(e.employeeId) === String(att.employeeCode)) ||
+          (att.employeeName && e.name.toLowerCase() === att.employeeName.toLowerCase())
+      );
+      const resolvedEmpId = emp?.id || emp?.employeeId || att.employeeId || att.employeeCode || '';
+      const resolvedEmpName = emp?.name || att.employeeName || 'Employee';
+
+      const key = `${resolvedEmpId}_${attDate}`;
+      if (manualKeys.has(key)) {
+        // Manual timesheet already logged for this employee on this date
+        return;
+      }
+
+      const start = att.checkIn || '09:00';
+      const isToday = attDate === todayStr;
+      const end = att.checkOut || (isToday ? toHHMM(new Date()) : '18:00');
+      const lunchBreak = lunchMinutes(att) ?? (att.lunchOut && att.lunchIn ? 60 : 45);
+
+      let workedHrs = 0;
+      const wm = workedMinutes(att, isToday ? toHHMM(new Date()) : undefined);
+      if (wm != null && wm > 0) {
+        workedHrs = Math.round((wm / 60) * 10) / 10;
+      } else {
+        workedHrs = calculateDurationHours(start, end, lunchBreak);
+        if (workedHrs <= 0) {
+          workedHrs = att.status === 'Half Day' ? 4.5 : 8.0;
+        }
+      }
+
+      // Check tasks assigned to this employee on this date or currently in progress
+      const empTasks = tasks.filter((t) => {
+        const isAssigned =
+          (t.assignedTo && t.assignedTo.toLowerCase() === resolvedEmpName.toLowerCase()) ||
+          (t.assignee && t.assignee.toLowerCase() === resolvedEmpName.toLowerCase()) ||
+          (t.assignedToId && String(t.assignedToId) === String(resolvedEmpId));
+
+        if (!isAssigned) return false;
+        const tDate = t.dueDate || t.deadline || t.start;
+        return tDate === attDate || (!t.dueDate && t.status !== 'Completed');
+      });
+
+      // Check deliverables
+      const empDeliverables = deliverables.filter((d) => {
+        const isOwner =
+          (d.employeeName && d.employeeName.toLowerCase() === resolvedEmpName.toLowerCase()) ||
+          (d.employeeId && String(d.employeeId) === String(resolvedEmpId));
+        return isOwner && (d.date === attDate || d.period === attDate.slice(0, 7));
+      });
+
+      const assignedProject = projects.find((p) => {
+        if (empTasks.length > 0 && empTasks[0].projectId) {
+          return String(p.id) === String(empTasks[0].projectId);
+        }
+        return (p.team || []).some((m) => m.toLowerCase() === resolvedEmpName.toLowerCase()) || p.manager === resolvedEmpName;
+      });
+
+      let taskDesc = '';
+      if (empTasks.length > 0) {
+        taskDesc = empTasks.map((t) => `${t.title || t.task || 'Task'} (${t.status || 'Active'})`).join(', ');
+      } else if (empDeliverables.length > 0) {
+        taskDesc = empDeliverables.map((d) => `${d.type || 'Deliverable'} × ${d.qty || 1}`).join(', ');
+      } else {
+        taskDesc = `Daily Attendance & Operations · ${att.status}${att.notes ? ` · ${att.notes}` : ''}`;
+      }
+
+      const projName = assignedProject?.name || empTasks[0]?.projectName || 'General Operations';
+      const projId = assignedProject?.id || empTasks[0]?.projectId || 'general';
+
+      list.push({
+        id: `ATT-${att.id || `${resolvedEmpId}-${attDate}`}`,
+        employeeId: resolvedEmpId,
+        employeeName: resolvedEmpName,
+        employeeCode: emp?.employeeId || att.employeeCode,
+        projectId: projId,
+        projectName: projName,
+        date: attDate,
+        taskDescription: taskDesc,
+        startTime: start,
+        endTime: end,
+        breakDurationMinutes: lunchBreak,
+        totalHours: workedHrs,
+        isBillable: projId !== 'general',
+        status: att.status,
+        source: 'attendance',
+        rawAttendance: att,
+      });
+    });
+
+    return list.sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
+  }, [timesheetRecords, attendanceRecords, activeEmployees, tasks, deliverables, projects, todayStr]);
+
+  // Filter entries based on PeriodMode and selected date/month/week
   const periodFilteredEntries = useMemo(() => {
-    return timesheetRecords.filter((rec) => {
+    return unifiedEntries.filter((rec) => {
       if (periodMode === 'daily') {
         return rec.date === selectedDate;
       } else if (periodMode === 'monthly') {
         return rec.date.startsWith(selectedMonth);
       } else if (periodMode === 'weekly') {
-        // Calculate week bounds (Monday to Sunday for selectedDate)
-        const target = new Date(selectedDate);
-        if (isNaN(target.getTime())) return true;
-        const day = target.getDay(); // 0 is Sun, 1 is Mon...
-        const diffToMon = target.getDate() - day + (day === 0 ? -6 : 1);
-        const monday = new Date(target.setDate(diffToMon));
-        const sunday = new Date(monday);
-        sunday.setDate(monday.getDate() + 6);
-
-        const monStr = monday.toISOString().split('T')[0];
-        const sunStr = sunday.toISOString().split('T')[0];
-        return rec.date >= monStr && rec.date <= sunStr;
+        return rec.date >= weekBounds.monStr && rec.date <= weekBounds.sunStr;
       }
       return true;
     });
-  }, [timesheetRecords, periodMode, selectedDate, selectedMonth]);
+  }, [unifiedEntries, periodMode, selectedDate, selectedMonth, weekBounds]);
 
-  // Apply search and dropdown filters
+  // Apply search, employee, project, and billable dropdown filters
   const filteredEntries = useMemo(() => {
     return periodFilteredEntries.filter((rec) => {
       const q = search.toLowerCase().trim();
@@ -185,9 +362,13 @@ export default function Timesheets() {
       const matchesSearch = empMatch || projMatch || taskMatch;
 
       const matchesEmp =
-        employeeFilter === 'All' || String(rec.employeeId) === String(employeeFilter);
+        employeeFilter === 'All' ||
+        String(rec.employeeId) === String(employeeFilter) ||
+        (rec.employeeName && rec.employeeName.toLowerCase() === employeeFilter.toLowerCase());
+
       const matchesProj =
-        projectFilter === 'All' || String(rec.projectId) === String(projectFilter);
+        projectFilter === 'All' || String(rec.projectId) === String(projectFilter) || rec.projectName === projectFilter;
+
       const matchesBillable =
         billableFilter === 'All' ||
         (billableFilter === 'Billable' && rec.isBillable) ||
@@ -197,7 +378,119 @@ export default function Timesheets() {
     });
   }, [periodFilteredEntries, search, employeeFilter, projectFilter, billableFilter]);
 
-  // Summary Metrics calculated purely from filtered real timesheet data
+  // Weekly Employee Matrix: per-employee day-by-day hours Mon-Sun, total weekly hours, tasks, projects
+  const weeklyEmployeeMatrix = useMemo(() => {
+    const list = activeEmployees.filter((emp) => {
+      if (employeeFilter !== 'All') {
+        return (
+          String(emp.id) === String(employeeFilter) ||
+          String(emp.employeeId) === String(employeeFilter) ||
+          emp.name.toLowerCase() === employeeFilter.toLowerCase()
+        );
+      }
+      return true;
+    });
+
+    return list.map((emp) => {
+      const empIdStr = String(emp.id || emp.employeeId);
+      const empEntries = periodFilteredEntries.filter(
+        (rec) =>
+          String(rec.employeeId) === empIdStr ||
+          rec.employeeName.toLowerCase() === emp.name.toLowerCase()
+      );
+
+      const dayHours: Record<string, number> = {};
+      const dayTasks: Record<string, string[]> = {};
+
+      weekBounds.days.forEach((d) => {
+        const forDay = empEntries.filter((e) => e.date === d.dateStr);
+        const hrs = forDay.reduce((sum, e) => sum + e.totalHours, 0);
+        dayHours[d.dateStr] = Math.round(hrs * 10) / 10;
+        dayTasks[d.dateStr] = forDay.map((e) => e.projectName);
+      });
+
+      const totalWeekHours = Math.round(empEntries.reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
+      const billableHours = Math.round(empEntries.filter((e) => e.isBillable).reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
+      const daysPresent = Object.values(dayHours).filter((h) => h > 0).length;
+
+      const projectsWorked = Array.from(new Set(empEntries.map((e) => e.projectName).filter(Boolean)));
+
+      const weekTasks = tasks.filter((t) => {
+        const assigned =
+          (t.assignedTo && t.assignedTo.toLowerCase() === emp.name.toLowerCase()) ||
+          (t.assignee && t.assignee.toLowerCase() === emp.name.toLowerCase()) ||
+          (t.assignedToId && String(t.assignedToId) === empIdStr);
+        const tDate = t.dueDate || t.deadline || t.start;
+        return assigned && tDate && tDate >= weekBounds.monStr && tDate <= weekBounds.sunStr;
+      });
+
+      return {
+        employee: emp,
+        empIdStr,
+        dayHours,
+        dayTasks,
+        totalWeekHours,
+        billableHours,
+        nonBillableHours: Math.round((totalWeekHours - billableHours) * 10) / 10,
+        daysPresent,
+        projectsWorked,
+        tasksCount: weekTasks.length,
+        completedTasksCount: weekTasks.filter((t) => t.status === 'Completed' || t.status === 'Done').length,
+      };
+    });
+  }, [activeEmployees, employeeFilter, periodFilteredEntries, weekBounds, tasks]);
+
+  // Monthly Employee Summary: monthly hours, days present, billable %, deliverables, avg hours
+  const monthlyEmployeeSummary = useMemo(() => {
+    const list = activeEmployees.filter((emp) => {
+      if (employeeFilter !== 'All') {
+        return (
+          String(emp.id) === String(employeeFilter) ||
+          String(emp.employeeId) === String(employeeFilter) ||
+          emp.name.toLowerCase() === employeeFilter.toLowerCase()
+        );
+      }
+      return true;
+    });
+
+    return list.map((emp) => {
+      const empIdStr = String(emp.id || emp.employeeId);
+      const empEntries = periodFilteredEntries.filter(
+        (rec) =>
+          String(rec.employeeId) === empIdStr ||
+          rec.employeeName.toLowerCase() === emp.name.toLowerCase()
+      );
+
+      const totalMonthHours = Math.round(empEntries.reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
+      const billableHours = Math.round(empEntries.filter((e) => e.isBillable).reduce((sum, e) => sum + e.totalHours, 0) * 10) / 10;
+      const uniqueDates = new Set(empEntries.filter((e) => e.totalHours > 0).map((e) => e.date)).size;
+      const avgDaily = uniqueDates > 0 ? Math.round((totalMonthHours / uniqueDates) * 10) / 10 : 0;
+      const projectsWorked = Array.from(new Set(empEntries.map((e) => e.projectName).filter(Boolean)));
+
+      const empDeliverables = deliverables.filter((d) => {
+        const isOwner =
+          (d.employeeName && d.employeeName.toLowerCase() === emp.name.toLowerCase()) ||
+          (d.employeeId && String(d.employeeId) === empIdStr);
+        return isOwner && ((d.period && d.period === selectedMonth) || (d.date && d.date.startsWith(selectedMonth)));
+      });
+
+      const totalDeliverablesCount = empDeliverables.reduce((s, d) => s + (Number(d.qty) || 1), 0);
+
+      return {
+        employee: emp,
+        empIdStr,
+        totalMonthHours,
+        billableHours,
+        nonBillableHours: Math.round((totalMonthHours - billableHours) * 10) / 10,
+        daysPresent: uniqueDates,
+        avgDaily,
+        projectsWorked,
+        deliverablesCount: totalDeliverablesCount,
+      };
+    });
+  }, [activeEmployees, employeeFilter, periodFilteredEntries, selectedMonth, deliverables]);
+
+  // Summary Metrics calculated dynamically from active entries
   const summaryMetrics = useMemo(() => {
     const totalHours = filteredEntries.reduce((sum, r) => sum + (Number(r.totalHours) || 0), 0);
     const billableHours = filteredEntries
@@ -221,6 +514,60 @@ export default function Timesheets() {
       avgHoursPerDay,
     };
   }, [filteredEntries]);
+
+  // Quick action to log / adjust an entry in the modal
+  const handleOpenLogForEntry = (entry: UnifiedWorkEntry) => {
+    if (entry.rawTimesheet) {
+      handleOpenEditModal(entry.rawTimesheet);
+      return;
+    }
+    setEditingEntry(null);
+    const matchedProj = projects.find((p) => String(p.id) === String(entry.projectId) || p.name === entry.projectName);
+    setForm({
+      employeeId: entry.employeeId,
+      projectId: matchedProj?.id || projects[0]?.id || '',
+      date: entry.date,
+      taskDescription: entry.taskDescription,
+      startTime: entry.startTime,
+      endTime: entry.endTime,
+      breakDurationMinutes: entry.breakDurationMinutes,
+      isBillable: entry.isBillable,
+      notes: `Logged from ${entry.source === 'attendance' ? 'attendance' : 'task'} log`,
+    });
+    setErrors({});
+    setShowModal(true);
+  };
+
+  // Export CSV handler
+  const handleExportCSV = () => {
+    if (filteredEntries.length === 0) {
+      showToast('No timesheet records to export.', 'info');
+      return;
+    }
+    const headers = ['Employee Name', 'Employee Code', 'Project Name', 'Task / Description', 'Date', 'Start Time', 'End Time', 'Break (Mins)', 'Hours Worked', 'Billing Status', 'Source'];
+    const rows = filteredEntries.map((rec) => [
+      `"${rec.employeeName}"`,
+      `"${rec.employeeCode || ''}"`,
+      `"${rec.projectName}"`,
+      `"${rec.taskDescription.replace(/"/g, '""')}"`,
+      `"${rec.date}"`,
+      `"${rec.startTime}"`,
+      `"${rec.endTime}"`,
+      rec.breakDurationMinutes,
+      rec.totalHours,
+      rec.isBillable ? '"Billable"' : '"Non-Billable"',
+      `"${rec.source}"`,
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `timesheets_${periodMode}_${selectedDate || selectedMonth}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast(`Exported ${filteredEntries.length} timesheet records.`, 'success');
+  };
 
   // Modal handlers
   const handleOpenAddModal = () => {
