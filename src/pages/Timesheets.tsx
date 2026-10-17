@@ -749,17 +749,28 @@ export default function Timesheets() {
             Timesheets
           </div>
           <div style={{ fontSize: 13, color: '#697586', marginTop: 2 }}>
-            Log employee work hours, billable time, and project tasks
+            Complete employee work details, weekly and monthly hours, and project tasks
           </div>
         </div>
 
-        <button
-          className="btn-primary"
-          style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
-          onClick={handleOpenAddModal}
-        >
-          <Plus size={15} /> Log Timesheet
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={handleExportCSV}
+          >
+            <Download size={14} /> Export CSV
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={handleOpenAddModal}
+          >
+            <Plus size={15} /> Log Timesheet
+          </button>
+        </div>
       </div>
 
       {/* Dependency Warning */}
@@ -1006,29 +1017,140 @@ export default function Timesheets() {
 
           {/* Date Selector & Filters */}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            {periodMode !== 'monthly' ? (
+            {periodMode === 'weekly' ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: '#697586' }}>
-                  {periodMode === 'daily' ? 'Date:' : 'Week Date:'}
-                </span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    const cur = new Date(selectedDate);
+                    cur.setDate(cur.getDate() - 7);
+                    setSelectedDate(cur.toISOString().split('T')[0]);
+                  }}
+                  title="Previous Week"
+                >
+                  <ChevronLeft size={14} />
+                </button>
                 <input
                   type="date"
                   className="input-base"
-                  style={{ fontSize: 13, width: 150 }}
+                  style={{ fontSize: 13, width: 140 }}
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
                 />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    const cur = new Date(selectedDate);
+                    cur.setDate(cur.getDate() + 7);
+                    setSelectedDate(cur.toISOString().split('T')[0]);
+                  }}
+                  title="Next Week"
+                >
+                  <ChevronRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 9px', fontSize: 12 }}
+                  onClick={() => setSelectedDate(todayStr)}
+                >
+                  This Week
+                </button>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#3B5BDB', background: '#EEF2FF', padding: '4px 8px', borderRadius: 6 }}>
+                  {weekBounds.formattedRange}
+                </span>
               </div>
-            ) : (
+            ) : periodMode === 'monthly' ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: '#697586' }}>Month:</span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    const [y, m] = selectedMonth.split('-').map(Number);
+                    const prev = new Date(y, m - 2, 1);
+                    setSelectedMonth(prev.toISOString().slice(0, 7));
+                  }}
+                  title="Previous Month"
+                >
+                  <ChevronLeft size={14} />
+                </button>
                 <input
                   type="month"
                   className="input-base"
-                  style={{ fontSize: 13, width: 160 }}
+                  style={{ fontSize: 13, width: 140 }}
                   value={selectedMonth}
                   onChange={(e) => setSelectedMonth(e.target.value)}
                 />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    const [y, m] = selectedMonth.split('-').map(Number);
+                    const next = new Date(y, m, 1);
+                    setSelectedMonth(next.toISOString().slice(0, 7));
+                  }}
+                  title="Next Month"
+                >
+                  <ChevronRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 9px', fontSize: 12 }}
+                  onClick={() => setSelectedMonth(currentMonthStr)}
+                >
+                  This Month
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    const cur = new Date(selectedDate);
+                    cur.setDate(cur.getDate() - 1);
+                    setSelectedDate(cur.toISOString().split('T')[0]);
+                  }}
+                  title="Previous Day"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <input
+                  type="date"
+                  className="input-base"
+                  style={{ fontSize: 13, width: 140 }}
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    const cur = new Date(selectedDate);
+                    cur.setDate(cur.getDate() + 1);
+                    setSelectedDate(cur.toISOString().split('T')[0]);
+                  }}
+                  title="Next Day"
+                >
+                  <ChevronRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '5px 9px', fontSize: 12 }}
+                  onClick={() => setSelectedDate(todayStr)}
+                >
+                  Today
+                </button>
               </div>
             )}
 
@@ -1074,7 +1196,7 @@ export default function Timesheets() {
             >
               <option value="All">All Projects</option>
               {projects.map((p) => (
-                <option key={p.id} value={p.id}>
+                <option key={p.id} value={p.name}>
                   {p.name}
                 </option>
               ))}
@@ -1093,130 +1215,446 @@ export default function Timesheets() {
           </div>
         </div>
 
-        {/* Timesheets Table */}
-        <table className="table-base">
-          <thead>
-            <tr>
-              <th>EMPLOYEE</th>
-              <th>PROJECT</th>
-              <th>TASK / DESCRIPTION</th>
-              <th>DATE</th>
-              <th>START - END</th>
-              <th>BREAK</th>
-              <th style={{ textAlign: 'right' }}>HOURS</th>
-              <th>BILLING</th>
-              <th style={{ textAlign: 'right' }}>ACTIONS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredEntries.length === 0 ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '40px 20px', color: '#697586' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                    <Clock size={32} style={{ color: '#94A3B8' }} />
-                    <div style={{ fontWeight: 600, color: '#1A1F36', fontSize: 15 }}>
-                      No Timesheet Entries Found
-                    </div>
-                    <div style={{ fontSize: 13, maxWidth: 420 }}>
-                      There are no logged timesheets matching the selected period and filters. Click "+ Log Timesheet" to create a new entry.
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            ) : (
-              filteredEntries.map((rec) => {
-                const initials = (rec.employeeName || '')
-                  .split(' ')
-                  .map((n) => n[0])
-                  .join('')
-                  .slice(0, 2)
-                  .toUpperCase() || 'EM';
+        {/* WEEKLY EMPLOYEE WORK MATRIX (Rendered when in Weekly mode) */}
+        {periodMode === 'weekly' && (
+          <div style={{ borderBottom: '1px solid #E5E9F2', paddingBottom: 16 }}>
+            <div style={{ padding: '14px 18px', background: '#F8FAFC', borderBottom: '1px solid #E5E9F2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14.5, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <BarChart2 size={16} style={{ color: '#3B5BDB' }} />
+                  Weekly Employee Hours & Deliverables Summary
+                </div>
+                <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                  Daily hours (Mon–Sun), weekly total hours worked, projects, and task completions
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
+                {weeklyEmployeeMatrix.filter(m => m.totalWeekHours > 0).length} of {weeklyEmployeeMatrix.length} employees active
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table-base">
+                <thead>
+                  <tr style={{ background: '#F8FAFC' }}>
+                    <th>EMPLOYEE</th>
+                    {weekBounds.days.map((d) => (
+                      <th key={d.dateStr} style={{ textAlign: 'center', minWidth: 64, background: d.isToday ? '#EEF2FF' : undefined }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: d.isToday ? '#3B5BDB' : '#475569' }}>{d.dayName}</div>
+                        <div style={{ fontSize: 10.5, fontWeight: 500, color: d.isToday ? '#3B5BDB' : '#64748B' }}>{d.dateStr.slice(8)}/{d.dateStr.slice(5, 7)}</div>
+                      </th>
+                    ))}
+                    <th style={{ textAlign: 'right', minWidth: 85 }}>WEEK HOURS</th>
+                    <th>PROJECTS & DELIVERABLES</th>
+                    <th style={{ textAlign: 'center' }}>STATUS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weeklyEmployeeMatrix.map((m) => {
+                    const empInitials = (m.employee.name || '')
+                      .split(' ')
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase() || 'EM';
 
-                return (
-                  <tr key={rec.id}>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div
-                          style={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: '50%',
-                            background: '#EEF2FF',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: 12,
-                            fontWeight: 700,
-                            color: '#3B5BDB',
-                            flexShrink: 0,
-                          }}
-                        >
-                          {initials}
+                    return (
+                      <tr key={m.empIdStr}>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: '50%',
+                                background: '#EEF2FF',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: '#3B5BDB',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {empInitials}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#1E293B' }}>{m.employee.name}</div>
+                              <div style={{ fontSize: 11, color: '#64748B' }}>
+                                {m.employee.role || 'Employee'} {m.employee.employeeId ? `· ${m.employee.employeeId}` : ''}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        {weekBounds.days.map((d) => {
+                          const hrs = m.dayHours[d.dateStr] || 0;
+                          return (
+                            <td
+                              key={d.dateStr}
+                              style={{
+                                textAlign: 'center',
+                                background: d.isToday ? '#F8FAFC' : undefined,
+                                fontWeight: hrs > 0 ? 600 : 400,
+                                color: hrs > 0 ? '#1E293B' : '#94A3B8',
+                                fontSize: 13,
+                              }}
+                            >
+                              {hrs > 0 ? (
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '3px 7px',
+                                    borderRadius: 6,
+                                    background: hrs >= 8 ? '#ECFDF5' : '#F1F5F9',
+                                    color: hrs >= 8 ? '#059669' : '#334155',
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {hrs}h
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td style={{ textAlign: 'right' }}>
+                          <div style={{ fontWeight: 800, fontSize: 14.5, color: m.totalWeekHours >= 40 ? '#16A34A' : '#3B5BDB' }}>
+                            {m.totalWeekHours} hrs
+                          </div>
+                          <div style={{ fontSize: 11, color: '#64748B' }}>
+                            {m.daysPresent} day{m.daysPresent === 1 ? '' : 's'} worked
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 280 }}>
+                            {m.projectsWorked.length > 0 ? (
+                              m.projectsWorked.map((p) => (
+                                <span
+                                  key={p}
+                                  style={{
+                                    fontSize: 11,
+                                    padding: '2px 7px',
+                                    borderRadius: 4,
+                                    background: '#F1F5F9',
+                                    color: '#334155',
+                                    fontWeight: 500,
+                                  }}
+                                  title={p}
+                                >
+                                  {p}
+                                </span>
+                              ))
+                            ) : (
+                              <span style={{ fontSize: 11, color: '#94A3B8' }}>General operations</span>
+                            )}
+                          </div>
+                          {m.completedTasksCount > 0 && (
+                            <div style={{ fontSize: 11, color: '#16A34A', fontWeight: 600, marginTop: 3 }}>
+                              ✓ {m.completedTasksCount} task{m.completedTasksCount === 1 ? '' : 's'} done this week
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          {m.totalWeekHours >= 40 ? (
+                            <span className="badge badge-green">✓ 40h+ Completed</span>
+                          ) : m.totalWeekHours >= 30 ? (
+                            <span className="badge badge-blue">On Track ({m.totalWeekHours}h)</span>
+                          ) : m.totalWeekHours > 0 ? (
+                            <span className="badge badge-amber">{m.totalWeekHours}h Logged</span>
+                          ) : (
+                            <span className="badge badge-gray">No Activity</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* MONTHLY EMPLOYEE MATRIX (Rendered when in Monthly mode) */}
+        {periodMode === 'monthly' && (
+          <div style={{ borderBottom: '1px solid #E5E9F2', paddingBottom: 16 }}>
+            <div style={{ padding: '14px 18px', background: '#F8FAFC', borderBottom: '1px solid #E5E9F2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14.5, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Layers size={16} style={{ color: '#F59E0B' }} />
+                  Monthly Employee Performance & Work Breakdown ({new Date(`${selectedMonth}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })})
+                </div>
+                <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                  Monthly hours worked, days present, billable project contributions, and deliverable counts
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
+                {monthlyEmployeeSummary.filter(m => m.totalMonthHours > 0).length} of {monthlyEmployeeSummary.length} employees worked
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table-base">
+                <thead>
+                  <tr style={{ background: '#F8FAFC' }}>
+                    <th>EMPLOYEE</th>
+                    <th style={{ textAlign: 'center' }}>DAYS WORKED</th>
+                    <th style={{ textAlign: 'right' }}>MONTHLY HOURS</th>
+                    <th style={{ textAlign: 'right' }}>BILLABLE HOURS</th>
+                    <th style={{ textAlign: 'right' }}>AVG HOURS / DAY</th>
+                    <th>PROJECTS CONTRIBUTED</th>
+                    <th style={{ textAlign: 'center' }}>DELIVERABLES</th>
+                    <th style={{ textAlign: 'center' }}>STATUS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyEmployeeSummary.map((m) => {
+                    const empInitials = (m.employee.name || '')
+                      .split(' ')
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase() || 'EM';
+
+                    return (
+                      <tr key={m.empIdStr}>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: '50%',
+                                background: '#EEF2FF',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: '#3B5BDB',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {empInitials}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#1E293B' }}>{m.employee.name}</div>
+                              <div style={{ fontSize: 11, color: '#64748B' }}>
+                                {m.employee.role || 'Employee'} {m.employee.employeeId ? `· ${m.employee.employeeId}` : ''}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ textAlign: 'center', fontWeight: 600, fontSize: 13 }}>
+                          {m.daysPresent} day{m.daysPresent === 1 ? '' : 's'}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 14.5, color: '#1A1F36' }}>
+                          {m.totalMonthHours} hrs
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 13.5, color: '#12B76A' }}>
+                          {m.billableHours} hrs
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, fontSize: 13, color: '#64748B' }}>
+                          {m.avgDaily} hrs/day
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 260 }}>
+                            {m.projectsWorked.length > 0 ? (
+                              m.projectsWorked.map((p) => (
+                                <span
+                                  key={p}
+                                  style={{
+                                    fontSize: 11,
+                                    padding: '2px 7px',
+                                    borderRadius: 4,
+                                    background: '#F1F5F9',
+                                    color: '#334155',
+                                    fontWeight: 500,
+                                  }}
+                                >
+                                  {p}
+                                </span>
+                              ))
+                            ) : (
+                              <span style={{ fontSize: 11, color: '#94A3B8' }}>General operations</span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          {m.deliverablesCount > 0 ? (
+                            <span className="badge badge-purple">{m.deliverablesCount} items</span>
+                          ) : (
+                            <span style={{ fontSize: 12, color: '#94A3B8' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          {m.totalMonthHours >= 160 ? (
+                            <span className="badge badge-green">Full Target</span>
+                          ) : m.totalMonthHours > 0 ? (
+                            <span className="badge badge-blue">Active</span>
+                          ) : (
+                            <span className="badge badge-gray">No Hours</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Detailed Timesheets Table */}
+        <div style={{ padding: '14px 18px', background: '#FFFFFF', borderBottom: '1px solid #E5E9F2', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Clock size={15} style={{ color: '#3B5BDB' }} />
+            Detailed Work & Task Entries ({filteredEntries.length} record{filteredEntries.length === 1 ? '' : 's'})
+          </div>
+          <div style={{ fontSize: 12, color: '#64748B' }}>
+            Auto-synchronized with employee attendance & assigned tasks
+          </div>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table-base">
+            <thead>
+              <tr>
+                <th>EMPLOYEE</th>
+                <th>PROJECT</th>
+                <th>TASK / DESCRIPTION</th>
+                <th>DATE</th>
+                <th>START - END</th>
+                <th>BREAK</th>
+                <th style={{ textAlign: 'right' }}>HOURS</th>
+                <th>BILLING</th>
+                <th style={{ textAlign: 'right' }}>ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredEntries.length === 0 ? (
+                <tr>
+                  <td colSpan={9} style={{ textAlign: 'center', padding: '40px 20px', color: '#697586' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                      <Clock size={32} style={{ color: '#94A3B8' }} />
+                      <div style={{ fontWeight: 600, color: '#1A1F36', fontSize: 15 }}>
+                        No Work Records Found
+                      </div>
+                      <div style={{ fontSize: 13, maxWidth: 420 }}>
+                        No employee attendance or timesheet records match the selected period and filters.
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredEntries.map((rec) => {
+                  const initials = (rec.employeeName || '')
+                    .split(' ')
+                    .map((n) => n[0])
+                    .join('')
+                    .slice(0, 2)
+                    .toUpperCase() || 'EM';
+
+                  return (
+                    <tr key={rec.id}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: '50%',
+                              background: '#EEF2FF',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: '#3B5BDB',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {initials}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13.5 }}>{rec.employeeName}</div>
+                            {rec.employeeCode && (
+                              <div style={{ fontSize: 11, color: '#64748B' }}>{rec.employeeCode}</div>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{rec.employeeName}</div>
-                      </div>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Briefcase size={14} style={{ color: '#3B5BDB' }} />
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>{rec.projectName}</span>
-                      </div>
-                    </td>
-                    <td style={{ fontSize: 13, color: '#1A1F36', maxWidth: 220 }}>
-                      <div style={{ fontWeight: 500 }}>{rec.taskDescription}</div>
-                      {rec.notes && <div style={{ fontSize: 11.5, color: '#697586' }}>{rec.notes}</div>}
-                    </td>
-                    <td style={{ fontSize: 12.5, color: '#697586' }}>{rec.date}</td>
-                    <td style={{ fontSize: 12.5, color: '#697586' }}>
-                      {rec.startTime} – {rec.endTime}
-                    </td>
-                    <td style={{ fontSize: 12.5, color: '#697586' }}>
-                      {rec.breakDurationMinutes ? `${rec.breakDurationMinutes}m` : '0m'}
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 13.5, color: '#1A1F36' }}>
-                      {rec.totalHours} hrs
-                    </td>
-                    <td>
-                      <span className={`badge ${rec.isBillable ? 'badge-green' : 'badge-gray'}`}>
-                        {rec.isBillable ? 'Billable' : 'Non-Billable'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          style={{ fontSize: 11.5, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
-                          onClick={() => handleOpenEditModal(rec)}
-                        >
-                          <Edit3 size={12} /> Edit
-                        </button>
-                        {rec.id && (
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Briefcase size={14} style={{ color: '#3B5BDB' }} />
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{rec.projectName}</span>
+                        </div>
+                        {rec.source === 'attendance' ? (
+                          <span style={{ fontSize: 10, color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
+                            <span style={{ color: '#16A34A' }}>●</span> Attendance Auto-Sync
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 10, color: '#3B5BDB', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
+                            <span style={{ color: '#3B5BDB' }}>●</span> Manual Log
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: 13, color: '#1A1F36', maxWidth: 260 }}>
+                        <div style={{ fontWeight: 500 }}>{rec.taskDescription}</div>
+                      </td>
+                      <td style={{ fontSize: 12.5, color: '#697586' }}>{rec.date}</td>
+                      <td style={{ fontSize: 12.5, color: '#697586' }}>
+                        {rec.startTime} – {rec.endTime}
+                      </td>
+                      <td style={{ fontSize: 12.5, color: '#697586' }}>
+                        {rec.breakDurationMinutes ? `${rec.breakDurationMinutes}m` : '0m'}
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 13.5, color: '#1A1F36' }}>
+                        {rec.totalHours} hrs
+                      </td>
+                      <td>
+                        <span className={`badge ${rec.isBillable ? 'badge-green' : 'badge-gray'}`}>
+                          {rec.isBillable ? 'Billable' : 'Operational'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                           <button
                             type="button"
                             className="btn-secondary"
-                            style={{
-                              fontSize: 11.5,
-                              padding: '4px 8px',
-                              color: '#EF4444',
-                              borderColor: '#FCA5A5',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 4,
-                            }}
-                            onClick={() => setEntryToDelete(rec)}
+                            style={{ fontSize: 11.5, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
+                            onClick={() => handleOpenLogForEntry(rec)}
+                            title="Edit or log official timesheet entry"
                           >
-                            <Trash2 size={12} /> Delete
+                            <Edit3 size={12} /> {rec.source === 'manual' ? 'Edit' : 'Adjust'}
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                          {rec.source === 'manual' && rec.rawTimesheet && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{
+                                fontSize: 11.5,
+                                padding: '4px 8px',
+                                color: '#EF4444',
+                                borderColor: '#FCA5A5',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4,
+                              }}
+                              onClick={() => setEntryToDelete(rec.rawTimesheet!)}
+                            >
+                              <Trash2 size={12} /> Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Log / Edit Timesheet Modal */}
