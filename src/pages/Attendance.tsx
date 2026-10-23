@@ -420,6 +420,50 @@ export default function Attendance() {
     setSingleErrors({});
   };
 
+  /**
+   * When the admin changes the employee or date inside the mark/edit modal,
+   * look up whether a record already exists for that combination and pre-fill
+   * all shift/break fields from it (so you're editing the real data, not blanks).
+   * If no record exists, reset to sensible defaults.
+   */
+  const reloadModalRecord = (empId: string | number, date: string) => {
+    const rec = attendanceRecords.find(
+      (r) =>
+        r.date === date &&
+        (String(r.employeeId) === String(empId) || String(r.employeeCode) === String(empId))
+    );
+    if (rec) {
+      setEditingRecord(rec);
+      setSingleForm((prev) => ({
+        ...prev,
+        employeeId: empId,
+        date,
+        status: rec.status,
+        checkIn: toTimeInputValue(rec.checkIn) || WORK_START,
+        lunchOut: toTimeInputValue(rec.lunchOut) || '',
+        lunchIn: toTimeInputValue(rec.lunchIn) || '',
+        checkOut: toTimeInputValue(rec.checkOut) || '',
+        overtimeHours: rec.overtimeHours ? String(rec.overtimeHours) : '',
+        notes: rec.notes || '',
+      }));
+    } else {
+      setEditingRecord(null);
+      setSingleForm((prev) => ({
+        ...prev,
+        employeeId: empId,
+        date,
+        status: 'Present',
+        checkIn: WORK_START,
+        lunchOut: '13:00',
+        lunchIn: '14:00',
+        checkOut: WORK_END,
+        overtimeHours: '',
+        notes: '',
+      }));
+    }
+    setSingleErrors({});
+  };
+
   const validateSingleForm = () => {
     const errs: Record<string, string> = {};
     if (!singleForm.employeeId) errs.employeeId = 'Please select an employee.';
@@ -1680,8 +1724,8 @@ export default function Attendance() {
                     value={singleForm.employeeId}
                     disabled={!!editingRecord}
                     onChange={(e) => {
-                      setSingleForm((prev) => ({ ...prev, employeeId: e.target.value }));
-                      if (singleErrors.employeeId) setSingleErrors((prev) => ({ ...prev, employeeId: '' }));
+                      const newEmpId = e.target.value;
+                      reloadModalRecord(newEmpId, singleForm.date);
                     }}
                   >
                     <option value="">Select Employee...</option>
@@ -1707,8 +1751,8 @@ export default function Attendance() {
                     style={{ width: '100%', borderColor: singleErrors.date ? '#EF4444' : undefined }}
                     value={singleForm.date}
                     onChange={(e) => {
-                      setSingleForm((prev) => ({ ...prev, date: e.target.value }));
-                      if (singleErrors.date) setSingleErrors((prev) => ({ ...prev, date: '' }));
+                      const newDate = e.target.value;
+                      reloadModalRecord(singleForm.employeeId, newDate);
                     }}
                   />
                   {singleErrors.date && (
