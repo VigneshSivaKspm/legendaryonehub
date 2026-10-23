@@ -7,6 +7,7 @@ import {
   lunchMinutes,
   workedMinutes,
   toLocalDate,
+  toHHMM,
 } from './attendanceTimes';
 
 /**

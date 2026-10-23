@@ -396,7 +396,8 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
           </select>
         </div>
 
-        <table className="table-base">
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table className="table-base" style={{ minWidth: 700 }}>
           <thead>
             <tr>
               <th>EMPLOYEE</th>
@@ -413,7 +414,7 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={10} style={{ textAlign: 'center', padding: '32px', color: '#697586' }}>
+                <td colSpan={9} style={{ textAlign: 'center', padding: '32px', color: '#697586' }}>
                   No employees found. Click "+ Add Employee" to create one.
                 </td>
               </tr>
@@ -529,6 +530,7 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Add / Edit Employee Modal */}
