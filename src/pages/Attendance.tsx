@@ -43,6 +43,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import AttendanceRequestBadges from '../components/AttendanceRequestBadges';
 import {
   WORK_START,
+  WORK_END,
   LUNCH_MAX_MINUTES,
   REQUEST_LABELS,
   defaultCheckInFor,
