@@ -235,16 +235,21 @@ export default function Payroll() {
     const workingHours = Number(editForm.workingHours) > 0 ? Number(editForm.workingHours) : 8;
     const hourlyRate = workingHours > 0 ? dailyRate / workingHours : 0;
 
+    // Only present days and worked hours count. Leaves, holidays, and unworked days do not count
+    const presentDays = Number(editForm.presentDays) || 0;
+    const unworkedDays = Math.max(0, workDays - presentDays);
+    const unworkedDeduction = Math.round(dailyRate * unworkedDays);
     const unpaidDeduction = Math.round(dailyRate * unpaidDays);
     const absentDeduction = Math.round(dailyRate * absentDays);
     const gross = Math.round(base + allow + bon + ot);
-    const totalDed = Math.round(unpaidDeduction + absentDeduction + shortTimeDeduction + otherDed);
+    const totalDed = Math.round(unworkedDeduction + shortTimeDeduction + otherDed);
     const net = Math.max(0, Math.round(gross - totalDed));
 
     return {
       dailyRate,
       workingHours,
       hourlyRate,
+      unworkedDeduction,
       unpaidDeduction,
       absentDeduction,
       shortTimeDeduction,
@@ -256,6 +261,7 @@ export default function Payroll() {
     editForm.baseSalary,
     editForm.dailySalary,
     editForm.workingHours,
+    editForm.presentDays,
     editForm.allowances,
     editForm.bonus,
     editForm.overtime,

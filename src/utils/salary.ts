@@ -257,16 +257,12 @@ export function computeMonthPay(params: {
         earned = rates.daily * 0.5;
       }
     } else if (record?.status === 'On Leave' || (!record && leave)) {
+      // Leaves, company leaves, and government holidays are NOT calculated for salary
       const unpaid = leave?.leaveType === 'Unpaid Leave';
       kind = unpaid ? 'Unpaid Leave' : 'Paid Leave';
-      if (unpaid) {
-        dayFraction = leave?.isHalfDay ? 0.5 : 1;
-        deduction = rates.daily * dayFraction;
-        earned = 0;
-      } else {
-        deduction = 0;
-        earned = rates.daily;
-      }
+      dayFraction = 1;
+      deduction = rates.daily;
+      earned = 0; // Strictly no pay for unworked days/leaves
     } else if (record?.status === 'Absent' || hasAttendanceData) {
       kind = 'Absent';
       dayFraction = 1;

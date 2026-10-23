@@ -195,11 +195,10 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
 
     if (!formData.role.trim()) errs.role = 'Role is required.';
     
+    const dSal = Number(formData.dailySalary);
     const sal = Number(formData.salary);
-    if (formData.salary === '' || formData.salary === null || formData.salary === undefined || !formData.salary.toString().trim()) {
-      errs.salary = 'Monthly Salary is required.';
-    } else if (isNaN(sal) || sal <= 0) {
-      errs.salary = 'Salary must be a valid positive amount.';
+    if ((!formData.dailySalary || isNaN(dSal) || dSal <= 0) && (!formData.salary || isNaN(sal) || sal <= 0)) {
+      errs.salary = 'Daily Salary or Monthly Salary is required.';
     }
 
     if (!formData.employeeId.trim()) errs.employeeId = 'Employee ID is required.';
@@ -223,8 +222,13 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
 
     setIsSubmitting(true);
     try {
-      const salaryNum = Number(formData.salary);
-      const dailySalaryNum = Number(formData.dailySalary) > 0 ? Number(formData.dailySalary) : (salaryNum > 0 ? Math.round(salaryNum / 26) : 0);
+      let salaryNum = Number(formData.salary) || 0;
+      let dailySalaryNum = Number(formData.dailySalary) || 0;
+      if (dailySalaryNum > 0 && salaryNum <= 0) {
+        salaryNum = Math.round(dailySalaryNum * 26);
+      } else if (salaryNum > 0 && dailySalaryNum <= 0) {
+        dailySalaryNum = Math.round(salaryNum / 26);
+      }
       const workingHoursNum = Number(formData.workingHours) > 0 ? Number(formData.workingHours) : 8;
       const payload = {
         employeeId: formData.employeeId.trim(),
@@ -401,7 +405,7 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
               <th>ACCESS</th>
               <th>PHONE</th>
               <th>JOINING DATE</th>
-              <th style={{ textAlign: 'right' }}>SALARY</th>
+              <th style={{ textAlign: 'right' }}>DAILY SALARY / RATE</th>
               <th>STATUS</th>
               <th style={{ textAlign: 'right' }}>ACTIONS</th>
             </tr>
@@ -468,13 +472,19 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
                     </td>
                     <td style={{ fontSize: 13, color: '#697586' }}>{e.phone}</td>
                     <td style={{ fontSize: 13, color: '#697586' }}>{e.joiningDate || '—'}</td>
-                    <td style={{ textAlign: 'right', fontSize: 13 }}>
-                      <div style={{ fontWeight: 600 }}>₹{(Number(e.salary) || 0).toLocaleString('en-IN')}<span style={{ fontSize: 11, fontWeight: 500, color: '#697586' }}>/mo</span></div>
-                      <div style={{ fontSize: 11.5, color: '#697586', marginTop: 2 }}>
-                        ₹{(Number(e.dailySalary) || (Number(e.salary) ? Math.round(Number(e.salary) / 26) : 0)).toLocaleString('en-IN')}/day · {e.workingHours || 8}h
+                    <td
+                      style={{ textAlign: 'right', fontSize: 13, cursor: 'pointer' }}
+                      onClick={() => handleOpenEditModal(e)}
+                      title="Click to edit Daily Salary & Working Hours"
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 14, color: '#0F172A' }}>
+                        ₹{(Number(e.dailySalary) || (Number(e.salary) ? Math.round(Number(e.salary) / 26) : 0)).toLocaleString('en-IN')}<span style={{ fontSize: 11, fontWeight: 500, color: '#697586' }}>/day</span>
                       </div>
-                      <div style={{ fontSize: 10.5, color: '#3B5BDB', fontWeight: 600 }}>
-                        ₹{(Math.round(((Number(e.dailySalary) || (Number(e.salary) ? Math.round(Number(e.salary) / 26) : 0)) / (e.workingHours || 8)) * 100) / 100).toFixed(0)}/hr
+                      <div style={{ fontSize: 11.5, color: '#475569', marginTop: 2 }}>
+                        {e.workingHours || 8}h shift · <strong style={{ color: '#2563EB' }}>₹{(Math.round(((Number(e.dailySalary) || (Number(e.salary) ? Math.round(Number(e.salary) / 26) : 0)) / (e.workingHours || 8)) * 100) / 100).toFixed(0)}/hr</strong>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: '#64748B' }}>
+                        (₹{(Number(e.salary) || 0).toLocaleString('en-IN')}/mo)
                       </div>
                     </td>
                     <td>
@@ -616,31 +626,35 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
                 </div>
 
                 {/* Salary & Working Hours Configuration */}
-                <div style={{ gridColumn: 'span 2', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: '#1E293B', marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span>Salary & Working Hours Schedule</span>
-                    <span style={{ fontSize: 11, fontWeight: 500, color: '#64748B' }}>Auto-synced</span>
+                <div style={{ gridColumn: 'span 2', background: '#F8FAFC', border: '1.5px solid #3B82F6', borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1E293B', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>💰</span> Daily Salary & Working Hours Schedule
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: 4 }}>
+                      Auto-Calculated
+                    </span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                        Daily Salary (₹)
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 5, color: '#1E3A8A' }}>
+                        Daily Salary (₹) <span style={{ color: '#EF4444' }}>*</span>
                       </label>
                       <input
                         className="input-base"
                         type="number"
                         min="0"
-                        style={{ width: '100%' }}
+                        style={{ width: '100%', borderColor: '#93C5FD', fontWeight: 600 }}
                         placeholder="e.g. 1000"
                         value={formData.dailySalary}
                         onChange={(e) => handleFieldChange('dailySalary', e.target.value)}
                       />
-                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>Per working day rate</div>
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>Per day rate</div>
                     </div>
 
                     <div>
-                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                        Working Hours / Day
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 5, color: '#1A1F36' }}>
+                        Working Hours / Day <span style={{ color: '#EF4444' }}>*</span>
                       </label>
                       <input
                         className="input-base"
@@ -658,7 +672,7 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
 
                     <div>
                       <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                        Monthly Salary (₹) <span style={{ color: '#EF4444' }}>*</span>
+                        Monthly Salary (₹) <span style={{ fontSize: 11, color: '#64748B' }}>(26 days)</span>
                       </label>
                       <input
                         className="input-base"
@@ -669,7 +683,7 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
                         value={formData.salary}
                         onChange={(e) => handleFieldChange('salary', e.target.value)}
                       />
-                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>26 days basis</div>
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>Auto-synced with daily</div>
                     </div>
                   </div>
 
@@ -680,15 +694,16 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
                     const dSal = Number(formData.dailySalary) || (Number(formData.salary) ? Math.round(Number(formData.salary) / 26) : 0);
                     const wHrs = Number(formData.workingHours) || 8;
                     const hRate = wHrs > 0 ? dSal / wHrs : 0;
-                    if (dSal <= 0) return null;
                     return (
-                      <div style={{ marginTop: 10, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#1E40AF', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                        <div>
-                          Hourly rate: <strong style={{ fontSize: 13, color: '#1D4ED8' }}>₹{hRate.toFixed(2)}/hr</strong>
-                          <span style={{ color: '#3B82F6' }}> (₹{dSal.toLocaleString('en-IN')}/day ÷ {wHrs} hrs)</span>
+                      <div style={{ marginTop: 12, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8, padding: '10px 12px', fontSize: 12, color: '#1E40AF' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                          <div>
+                            Hourly rate: <strong style={{ fontSize: 13.5, color: '#1D4ED8' }}>₹{hRate.toFixed(2)}/hr</strong>
+                            {dSal > 0 && <span style={{ color: '#3B82F6' }}> (₹{dSal.toLocaleString('en-IN')}/day ÷ {wHrs} hrs)</span>}
+                          </div>
                         </div>
-                        <div style={{ fontSize: 11, color: '#2563EB', fontWeight: 500 }}>
-                          ✓ Calculates strictly on working hours less break & lunch
+                        <div style={{ fontSize: 11, color: '#047857', fontWeight: 600, marginTop: 4, background: '#ECFDF5', padding: '4px 8px', borderRadius: 4, border: '1px solid #A7F3D0' }}>
+                          ⚡ Rule: Salary calculates strictly on presented days &amp; worked hours (less lunch &amp; break). Leaves, company holidays &amp; off days are NOT paid.
                         </div>
                       </div>
                     );
