@@ -37,6 +37,7 @@ import {
   LogOut,
   Wifi,
   Hourglass,
+  List,
 } from 'lucide-react';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import AttendanceRequestBadges from '../components/AttendanceRequestBadges';
@@ -58,7 +59,7 @@ import {
   type RequestKind,
 } from '../utils/attendanceTimes';
 
-type ViewTab = 'daily' | 'monthly';
+type ViewTab = 'daily' | 'all-days' | 'monthly';
 type AttendanceStatus = 'Present' | 'Absent' | 'On Leave' | 'Late' | 'Half Day';
 
 interface SingleFormState {
@@ -67,6 +68,8 @@ interface SingleFormState {
   status: AttendanceStatus;
   checkIn: string;
   checkOut: string;
+  lunchOut: string;
+  lunchIn: string;
   overtimeHours: string;
   notes: string;
 }
@@ -103,6 +106,7 @@ export default function Attendance() {
   // Filters
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [employeeFilter, setEmployeeFilter] = useState('All');
 
   // Modals
   const [showMarkModal, setShowMarkModal] = useState(false);
@@ -118,7 +122,9 @@ export default function Attendance() {
     date: todayStr,
     status: 'Present',
     checkIn: WORK_START,
-    checkOut: '',
+    lunchOut: '13:00',
+    lunchIn: '14:00',
+    checkOut: WORK_END,
     overtimeHours: '',
     notes: '',
   });
@@ -302,32 +308,74 @@ export default function Attendance() {
       });
   }, [activeEmployees, attendanceRecords, selectedMonth, search]);
 
+  const shiftSelectedDate = (days: number) => {
+    const d = new Date(selectedDate + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    setSelectedDate(toLocalDate(d));
+  };
+
+  // All Days Records Filtered for the admin all-days sheet
+  const allDaysRecords = useMemo(() => {
+    let recs = attendanceRecords;
+    if (selectedMonth) {
+      recs = recs.filter((r) => r.date.startsWith(selectedMonth));
+    }
+    if (employeeFilter !== 'All') {
+      recs = recs.filter(
+        (r) => String(r.employeeId) === employeeFilter || String(r.employeeCode) === employeeFilter
+      );
+    }
+    if (statusFilter !== 'All') {
+      recs = recs.filter((r) => r.status === statusFilter);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase().trim();
+      recs = recs.filter(
+        (r) =>
+          r.employeeName.toLowerCase().includes(q) ||
+          (r.employeeCode || '').toLowerCase().includes(q)
+      );
+    }
+    return recs;
+  }, [attendanceRecords, selectedMonth, employeeFilter, statusFilter, search]);
+
   // Single Modal Handlers
-  const handleOpenMarkModal = (emp?: Employee, existingRec?: AttendanceRecord) => {
+  const handleOpenMarkModal = (emp?: Employee, existingRec?: AttendanceRecord, defaultDate?: string) => {
     setSingleErrors({});
     if (existingRec) {
       setEditingRecord(existingRec);
       setSingleForm({
         employeeId: existingRec.employeeId || emp?.id || '',
-        date: existingRec.date || selectedDate,
+        date: existingRec.date || defaultDate || selectedDate,
         status: existingRec.status || 'Present',
-        checkIn: toTimeInputValue(existingRec.checkIn),
-        checkOut: toTimeInputValue(existingRec.checkOut),
+        checkIn: toTimeInputValue(existingRec.checkIn) || WORK_START,
+        lunchOut: toTimeInputValue(existingRec.lunchOut) || '13:00',
+        lunchIn: toTimeInputValue(existingRec.lunchIn) || '14:00',
+        checkOut: toTimeInputValue(existingRec.checkOut) || WORK_END,
         overtimeHours: existingRec.overtimeHours ? String(existingRec.overtimeHours) : '',
         notes: existingRec.notes || '',
       });
     } else if (emp) {
+      const targetDate = defaultDate || selectedDate;
       const rec =
-        dailyAttendanceMap.get(String(emp.id)) ||
-        dailyAttendanceMap.get(String(emp.employeeId));
+        (targetDate === selectedDate
+          ? dailyAttendanceMap.get(String(emp.id)) || dailyAttendanceMap.get(String(emp.employeeId))
+          : undefined) ||
+        attendanceRecords.find(
+          (r) =>
+            r.date === targetDate &&
+            (String(r.employeeId) === String(emp.id) || String(r.employeeCode) === String(emp.employeeId))
+        );
       if (rec) {
         setEditingRecord(rec);
         setSingleForm({
           employeeId: emp.id || emp.employeeId,
           date: rec.date,
           status: rec.status,
-          checkIn: toTimeInputValue(rec.checkIn),
-          checkOut: toTimeInputValue(rec.checkOut),
+          checkIn: toTimeInputValue(rec.checkIn) || WORK_START,
+          lunchOut: toTimeInputValue(rec.lunchOut) || '13:00',
+          lunchIn: toTimeInputValue(rec.lunchIn) || '14:00',
+          checkOut: toTimeInputValue(rec.checkOut) || WORK_END,
           overtimeHours: rec.overtimeHours ? String(rec.overtimeHours) : '',
           notes: rec.notes || '',
         });
@@ -335,10 +383,12 @@ export default function Attendance() {
         setEditingRecord(null);
         setSingleForm({
           employeeId: emp.id || emp.employeeId,
-          date: selectedDate,
+          date: targetDate,
           status: 'Present',
           checkIn: WORK_START,
-          checkOut: '',
+          lunchOut: '13:00',
+          lunchIn: '14:00',
+          checkOut: WORK_END,
           overtimeHours: '',
           notes: '',
         });
@@ -347,10 +397,12 @@ export default function Attendance() {
       setEditingRecord(null);
       setSingleForm({
         employeeId: activeEmployees.length > 0 ? activeEmployees[0].id || '' : '',
-        date: selectedDate,
+        date: defaultDate || selectedDate,
         status: 'Present',
         checkIn: WORK_START,
-        checkOut: '',
+        lunchOut: '13:00',
+        lunchIn: '14:00',
+        checkOut: WORK_END,
         overtimeHours: '',
         notes: '',
       });
@@ -371,24 +423,6 @@ export default function Attendance() {
     if (!singleForm.status) errs.status = 'Status is required.';
     const ot = Number(singleForm.overtimeHours || 0);
     if (isNaN(ot) || ot < 0 || ot > 16) errs.overtimeHours = 'Overtime must be between 0 and 16 hours.';
-
-    // Check duplicate if creating a new record for same employee + date
-    if (!editingRecord) {
-      const emp = activeEmployees.find(
-        (e) => String(e.id) === String(singleForm.employeeId) || String(e.employeeId) === String(singleForm.employeeId)
-      );
-      if (emp) {
-        const dup = attendanceRecords.find(
-          (r) =>
-            r.date === singleForm.date &&
-            (String(r.employeeId) === String(emp.id) ||
-              String(r.employeeCode) === String(emp.employeeId))
-        );
-        if (dup) {
-          errs.employeeId = `An attendance record already exists for ${emp.name} on ${singleForm.date}. Edit the existing record instead.`;
-        }
-      }
-    }
 
     return errs;
   };
@@ -419,19 +453,32 @@ export default function Attendance() {
         dept: emp.dept || '',
         date: singleForm.date,
         status: singleForm.status,
-        // Absent / On Leave days carry no times or overtime
         checkIn: statusHasTimes(singleForm.status) ? singleForm.checkIn.trim() : '',
+        lunchOut: statusHasTimes(singleForm.status) ? singleForm.lunchOut.trim() : '',
+        lunchIn: statusHasTimes(singleForm.status) ? singleForm.lunchIn.trim() : '',
         checkOut: statusHasTimes(singleForm.status) ? singleForm.checkOut.trim() : '',
-        overtimeHours: statusHasTimes(singleForm.status) ? Number(singleForm.overtimeHours) || 0 : 0,
+        overtimeHours: statusHasTimes(singleForm.status)
+          ? (singleForm.overtimeHours !== '' ? Number(singleForm.overtimeHours) || 0 : (singleForm.checkOut ? overtimeFor(singleForm.checkOut) : 0))
+          : 0,
         notes: singleForm.notes.trim() || '',
       };
 
       if (editingRecord && editingRecord.id) {
         await updateAttendance(editingRecord.id, payload);
-        showToast(`Attendance updated for ${emp.name}`, 'success');
+        showToast(`Attendance updated for ${emp.name} on ${singleForm.date}`, 'success');
       } else {
-        await addAttendance(payload);
-        showToast(`Attendance recorded for ${emp.name}`, 'success');
+        const existingForDate = attendanceRecords.find(
+          (r) =>
+            r.date === singleForm.date &&
+            (String(r.employeeId) === String(emp.id) || String(r.employeeCode) === String(emp.employeeId))
+        );
+        if (existingForDate && existingForDate.id) {
+          await updateAttendance(existingForDate.id, payload);
+          showToast(`Attendance updated for ${emp.name} on ${singleForm.date}`, 'success');
+        } else {
+          await addAttendance(payload);
+          showToast(`Attendance recorded for ${emp.name} on ${singleForm.date}`, 'success');
+        }
       }
       handleCloseMarkModal();
     } catch (err: any) {
@@ -700,7 +747,7 @@ export default function Attendance() {
                 style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
                 onClick={() => handleOpenMarkModal()}
               >
-                <Plus size={15} /> Mark Attendance
+                <Plus size={15} /> Mark / Edit Attendance
               </button>
             </>
           )}
@@ -1099,6 +1146,26 @@ export default function Attendance() {
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
+                background: activeTab === 'all-days' ? '#FFFFFF' : 'transparent',
+                color: activeTab === 'all-days' ? '#1A1F36' : '#697586',
+                boxShadow: activeTab === 'all-days' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+              onClick={() => setActiveTab('all-days')}
+            >
+              <List size={14} /> All Days Records
+            </button>
+            <button
+              type="button"
+              style={{
+                border: 'none',
+                padding: '6px 14px',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
                 background: activeTab === 'monthly' ? '#FFFFFF' : 'transparent',
                 color: activeTab === 'monthly' ? '#1A1F36' : '#697586',
                 boxShadow: activeTab === 'monthly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
@@ -1108,7 +1175,7 @@ export default function Attendance() {
               }}
               onClick={() => setActiveTab('monthly')}
             >
-              <CalendarDays size={14} /> Monthly View
+              <CalendarDays size={14} /> Monthly Summary
             </button>
           </div>
 
@@ -1117,13 +1184,41 @@ export default function Attendance() {
             {activeTab === 'daily' ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: '#697586' }}>Date:</span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '4px 8px', fontSize: 12 }}
+                  onClick={() => shiftSelectedDate(-1)}
+                  title="Previous Day"
+                >
+                  ◀
+                </button>
                 <input
                   type="date"
                   className="input-base"
-                  style={{ fontSize: 13, width: 150 }}
+                  style={{ fontSize: 13, width: 140 }}
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
                 />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '4px 8px', fontSize: 12 }}
+                  onClick={() => shiftSelectedDate(1)}
+                  title="Next Day"
+                >
+                  ▶
+                </button>
+                {selectedDate !== todayStr && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ padding: '4px 8px', fontSize: 11.5, color: '#2563EB', borderColor: '#BFDBFE' }}
+                    onClick={() => setSelectedDate(todayStr)}
+                  >
+                    Today
+                  </button>
+                )}
               </div>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1131,14 +1226,30 @@ export default function Attendance() {
                 <input
                   type="month"
                   className="input-base"
-                  style={{ fontSize: 13, width: 160 }}
+                  style={{ fontSize: 13, width: 150 }}
                   value={selectedMonth}
                   onChange={(e) => setSelectedMonth(e.target.value)}
                 />
               </div>
             )}
 
-            <div style={{ position: 'relative', width: 200 }}>
+            {activeTab === 'all-days' && (
+              <select
+                className="select-base"
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+                style={{ fontSize: 13, minWidth: 140 }}
+              >
+                <option value="All">All Employees</option>
+                {activeEmployees.map((emp) => (
+                  <option key={emp.id} value={String(emp.id)}>
+                    {emp.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <div style={{ position: 'relative', width: 180 }}>
               <Search
                 size={14}
                 style={{
@@ -1152,13 +1263,13 @@ export default function Attendance() {
               <input
                 className="input-base"
                 style={{ paddingLeft: 30, fontSize: 13, width: '100%' }}
-                placeholder="Search employee..."
+                placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
 
-            {activeTab === 'daily' && (
+            {(activeTab === 'daily' || activeTab === 'all-days') && (
               <select
                 className="select-base"
                 value={statusFilter}
@@ -1171,7 +1282,7 @@ export default function Attendance() {
                 <option value="On Leave">On Leave</option>
                 <option value="Late">Late</option>
                 <option value="Half Day">Half Day</option>
-                <option value="Unmarked">Unmarked</option>
+                {activeTab === 'daily' && <option value="Unmarked">Unmarked</option>}
               </select>
             )}
           </div>
@@ -1325,6 +1436,102 @@ export default function Attendance() {
               )}
             </tbody>
           </table>
+        ) : activeTab === 'all-days' ? (
+          /* All Days Records Table */
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th>DATE</th>
+                  <th>EMPLOYEE</th>
+                  <th>STATUS</th>
+                  <th>CHECK-IN</th>
+                  <th>LUNCH</th>
+                  <th>CHECK-OUT</th>
+                  <th>WORKED</th>
+                  <th>OVERTIME</th>
+                  <th>NOTES</th>
+                  <th style={{ textAlign: 'right' }}>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allDaysRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} style={{ textAlign: 'center', padding: '32px', color: '#697586' }}>
+                      No attendance records found for {selectedMonth}. Click "+ Mark Attendance" to add or edit any day.
+                    </td>
+                  </tr>
+                ) : (
+                  allDaysRecords.map((rec) => {
+                    const emp = activeEmployees.find(
+                      (e) => String(e.id) === String(rec.employeeId) || String(e.employeeId) === String(rec.employeeCode)
+                    );
+                    const worked = workedMinutes(rec);
+                    const badgeClass = getStatusBadgeStyle(rec.status);
+                    return (
+                      <tr key={rec.id || `${rec.employeeId}-${rec.date}`}>
+                        <td style={{ fontWeight: 600, fontSize: 13, color: '#1E293B', whiteSpace: 'nowrap' }}>
+                          {rec.date}
+                          <span style={{ fontSize: 11, color: '#64748B', marginLeft: 6 }}>
+                            ({new Date(rec.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' })})
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600, fontSize: 13.5 }}>{rec.employeeName}</div>
+                          <div style={{ fontSize: 11, color: '#64748B' }}>{rec.employeeCode || emp?.role || ''}</div>
+                        </td>
+                        <td>
+                          <span className={`badge ${badgeClass}`}>{rec.status}</span>
+                        </td>
+                        <td style={{ fontSize: 12.5, color: '#475569' }}>{formatTime12h(rec.checkIn)}</td>
+                        <td style={{ fontSize: 12.5, color: '#475569', whiteSpace: 'nowrap' }}>{formatLunch(rec)}</td>
+                        <td style={{ fontSize: 12.5, color: '#475569' }}>{formatTime12h(rec.checkOut)}</td>
+                        <td style={{ fontSize: 13, fontWeight: 600, color: '#059669' }}>
+                          {formatDuration(worked)}
+                        </td>
+                        <td style={{ fontSize: 12.5, color: rec.overtimeHours ? '#2563EB' : '#94A3B8', fontWeight: rec.overtimeHours ? 600 : 400 }}>
+                          {rec.overtimeHours ? `${rec.overtimeHours}h` : '—'}
+                        </td>
+                        <td style={{ fontSize: 12, color: '#697586', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {rec.notes || '—'}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ fontSize: 11.5, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
+                              onClick={() => handleOpenMarkModal(emp, rec, rec.date)}
+                            >
+                              <Edit3 size={12} /> Edit
+                            </button>
+                            {rec.id && (
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                style={{
+                                  fontSize: 11.5,
+                                  padding: '4px 8px',
+                                  color: '#EF4444',
+                                  borderColor: '#FCA5A5',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                }}
+                                onClick={() => setRecordToDelete(rec)}
+                              >
+                                <Trash2 size={12} /> Delete
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         ) : (
           /* Monthly Summary View */
           <table className="table-base">
@@ -1338,12 +1545,13 @@ export default function Attendance() {
                 <th style={{ textAlign: 'center' }}>LATE</th>
                 <th style={{ textAlign: 'center' }}>HALF DAY</th>
                 <th style={{ textAlign: 'right' }}>MONTHLY RATE</th>
+                <th style={{ textAlign: 'right' }}>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {monthlyEmployeeSummaries.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: '32px', color: '#697586' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', padding: '32px', color: '#697586' }}>
                     No matching monthly attendance records found for {selectedMonth}.
                   </td>
                 </tr>
@@ -1415,6 +1623,20 @@ export default function Attendance() {
                           {item.empPercentage}%
                         </span>
                       </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: 11.5, padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          onClick={() => {
+                            setEmployeeFilter(String(emp.id));
+                            setActiveTab('all-days');
+                          }}
+                          title="View and edit all days attendance for this employee"
+                        >
+                          <List size={12} /> Edit Days
+                        </button>
+                      </td>
                     </tr>
                   );
                 })
@@ -1480,7 +1702,6 @@ export default function Attendance() {
                     className="input-base"
                     style={{ width: '100%', borderColor: singleErrors.date ? '#EF4444' : undefined }}
                     value={singleForm.date}
-                    disabled={!!editingRecord}
                     onChange={(e) => {
                       setSingleForm((prev) => ({ ...prev, date: e.target.value }));
                       if (singleErrors.date) setSingleErrors((prev) => ({ ...prev, date: '' }));
@@ -1506,7 +1727,9 @@ export default function Attendance() {
                         ...prev,
                         status,
                         checkIn: defaultCheckInFor(status),
-                        checkOut: statusHasTimes(status) ? prev.checkOut : '',
+                        checkOut: statusHasTimes(status) ? prev.checkOut || WORK_END : '',
+                        lunchOut: statusHasTimes(status) ? prev.lunchOut || '13:00' : '',
+                        lunchIn: statusHasTimes(status) ? prev.lunchIn || '14:00' : '',
                         overtimeHours: statusHasTimes(status) ? prev.overtimeHours : '',
                       }));
                       if (singleErrors.status) setSingleErrors((prev) => ({ ...prev, status: '' }));
@@ -1520,63 +1743,96 @@ export default function Attendance() {
                   </select>
                 </div>
 
-                {/* Check-in only; check-out is recorded from the list when the employee signs off.
-                    Check-out & overtime are editable only on a day that was already checked out. */}
+                {/* Shift & Break Timings */}
                 {statusHasTimes(singleForm.status) ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                        Check-In Time
-                      </label>
-                      <input
-                        type="time"
-                        className="input-base"
-                        style={{ width: '100%' }}
-                        value={singleForm.checkIn}
-                        onChange={(e) => setSingleForm((prev) => ({ ...prev, checkIn: e.target.value }))}
-                      />
+                  <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#1E293B', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Shift &amp; Break Timings</span>
+                      <span style={{ fontSize: 11, fontWeight: 500, color: '#64748B' }}>Admin Editable</span>
                     </div>
-                    {editingRecord?.checkOut ? (
-                    <>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                        Check-Out Time
-                      </label>
-                      <input
-                        type="time"
-                        className="input-base"
-                        style={{ width: '100%' }}
-                        value={singleForm.checkOut}
-                        onChange={(e) => setSingleForm((prev) => ({ ...prev, checkOut: e.target.value }))}
-                      />
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: '#1A1F36' }}>
+                          Check-In Time
+                        </label>
+                        <input
+                          type="time"
+                          className="input-base"
+                          style={{ width: '100%' }}
+                          value={singleForm.checkIn}
+                          onChange={(e) => setSingleForm((prev) => ({ ...prev, checkIn: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: '#1A1F36' }}>
+                          Lunch Out (Break)
+                        </label>
+                        <input
+                          type="time"
+                          className="input-base"
+                          style={{ width: '100%' }}
+                          value={singleForm.lunchOut}
+                          onChange={(e) => setSingleForm((prev) => ({ ...prev, lunchOut: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: '#1A1F36' }}>
+                          Lunch In (Back)
+                        </label>
+                        <input
+                          type="time"
+                          className="input-base"
+                          style={{ width: '100%' }}
+                          value={singleForm.lunchIn}
+                          onChange={(e) => setSingleForm((prev) => ({ ...prev, lunchIn: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: '#1A1F36' }}>
+                          Check-Out Time
+                        </label>
+                        <input
+                          type="time"
+                          className="input-base"
+                          style={{ width: '100%' }}
+                          value={singleForm.checkOut}
+                          onChange={(e) => setSingleForm((prev) => ({ ...prev, checkOut: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: '#1A1F36' }}>
+                          Overtime (hrs)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="16"
+                          step="0.5"
+                          className="input-base"
+                          placeholder="0"
+                          style={{ width: '100%', borderColor: singleErrors.overtimeHours ? '#EF4444' : undefined }}
+                          value={singleForm.overtimeHours}
+                          onChange={(e) => setSingleForm((prev) => ({ ...prev, overtimeHours: e.target.value }))}
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                        Overtime (hrs)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="16"
-                        step="0.5"
-                        className="input-base"
-                        placeholder="0"
-                        style={{ width: '100%', borderColor: singleErrors.overtimeHours ? '#EF4444' : undefined }}
-                        value={singleForm.overtimeHours}
-                        onChange={(e) => setSingleForm((prev) => ({ ...prev, overtimeHours: e.target.value }))}
-                      />
-                    </div>
-                    </>
-                    ) : null}
                     {singleErrors.overtimeHours && (
-                      <div style={{ gridColumn: 'span 3', color: '#EF4444', fontSize: 11.5 }}>{singleErrors.overtimeHours}</div>
+                      <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4 }}>{singleErrors.overtimeHours}</div>
                     )}
-                    <div style={{ gridColumn: 'span 3', fontSize: 11.5, color: '#697586', marginTop: -4 }}>
-                      Working hours are 9:00 AM – 6:00 PM (half day: 2:00 PM – 6:00 PM).{' '}
-                      {editingRecord?.checkOut
-                        ? 'Time after 6:00 PM counts as overtime.'
-                        : 'Check-out is recorded later from the list (or by the employee) when they sign off.'}
-                    </div>
+                    {/* Live Worked Duration helper */}
+                    {singleForm.checkIn && singleForm.checkOut && (
+                      <div style={{ marginTop: 8, fontSize: 11.5, color: '#059669', fontWeight: 600 }}>
+                        ⏱ Actual Worked Duration: {(() => {
+                          let mins = minutesOf(singleForm.checkOut) - minutesOf(singleForm.checkIn);
+                          if (singleForm.lunchOut && singleForm.lunchIn) {
+                            mins -= Math.max(0, minutesOf(singleForm.lunchIn) - minutesOf(singleForm.lunchOut));
+                          }
+                          const h = Math.floor(Math.max(0, mins) / 60);
+                          const m = Math.max(0, mins) % 60;
+                          return `${h}h ${String(m).padStart(2, '0')}m (excluding break & lunch)`;
+                        })()}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, color: '#697586', background: '#F8F9FC', border: '1px solid #E5E9F2', borderRadius: 8, padding: '8px 12px' }}>
