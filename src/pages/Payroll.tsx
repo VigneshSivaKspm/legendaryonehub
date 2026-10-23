@@ -81,6 +81,8 @@ export default function Payroll() {
   // Edit Form State
   const [editForm, setEditForm] = useState<{
     baseSalary: string | number;
+    dailySalary: string | number;
+    workingHours: string | number;
     workingDays: string | number;
     presentDays: string | number;
     paidLeaveDays: string | number;
@@ -97,6 +99,8 @@ export default function Payroll() {
     notes: string;
   }>({
     baseSalary: 0,
+    dailySalary: 0,
+    workingHours: 8,
     workingDays: 30,
     presentDays: 30,
     paidLeaveDays: 0,
@@ -225,10 +229,12 @@ export default function Payroll() {
     const unpaidDays = Number(editForm.unpaidLeaveDays) || 0;
     const absentDays = Number(editForm.absentDays) || 0;
     const otherDed = Number(editForm.otherDeductions) || 0;
-    // Short time (late / early / long lunch) comes from attendance and isn't edited here
     const shortTimeDeduction = Number(activePayroll?.shortTimeDeduction) || 0;
 
-    const dailyRate = workDays > 0 ? base / workDays : 0;
+    const dailyRate = Number(editForm.dailySalary) > 0 ? Number(editForm.dailySalary) : (workDays > 0 ? base / workDays : 0);
+    const workingHours = Number(editForm.workingHours) > 0 ? Number(editForm.workingHours) : 8;
+    const hourlyRate = workingHours > 0 ? dailyRate / workingHours : 0;
+
     const unpaidDeduction = Math.round(dailyRate * unpaidDays);
     const absentDeduction = Math.round(dailyRate * absentDays);
     const gross = Math.round(base + allow + bon + ot);
@@ -236,6 +242,9 @@ export default function Payroll() {
     const net = Math.max(0, Math.round(gross - totalDed));
 
     return {
+      dailyRate,
+      workingHours,
+      hourlyRate,
       unpaidDeduction,
       absentDeduction,
       shortTimeDeduction,
@@ -245,6 +254,8 @@ export default function Payroll() {
     };
   }, [
     editForm.baseSalary,
+    editForm.dailySalary,
+    editForm.workingHours,
     editForm.allowances,
     editForm.bonus,
     editForm.overtime,
@@ -280,9 +291,15 @@ export default function Payroll() {
   const handleOpenEditModal = (rec: PayrollRecord) => {
     setActivePayroll(rec);
     const isPaid = rec.status === 'Paid';
+    const baseSal = rec.baseSalary || 0;
+    const wDays = rec.workingDays || getDaysInMonth(rec.month);
+    const dSal = rec.dailySalary || rec.dailyRate || (wDays > 0 ? Math.round(baseSal / wDays) : 0);
+    const wHours = rec.workingHours || 8;
     setEditForm({
-      baseSalary: rec.baseSalary || 0,
-      workingDays: rec.workingDays || getDaysInMonth(rec.month),
+      baseSalary: baseSal,
+      dailySalary: dSal,
+      workingHours: wHours,
+      workingDays: wDays,
       presentDays: rec.presentDays || 0,
       paidLeaveDays: rec.paidLeaveDays || 0,
       unpaidLeaveDays: rec.unpaidLeaveDays || 0,
@@ -310,6 +327,10 @@ export default function Payroll() {
       await savePayrollRecord({
         ...activePayroll,
         baseSalary: Number(editForm.baseSalary) || 0,
+        dailySalary: computedEditTotals.dailyRate,
+        dailyRate: computedEditTotals.dailyRate,
+        workingHours: computedEditTotals.workingHours,
+        hourlyRate: Math.round(computedEditTotals.hourlyRate * 100) / 100,
         workingDays: Number(editForm.workingDays) || 30,
         presentDays: Number(editForm.presentDays) || 0,
         paidLeaveDays: Number(editForm.paidLeaveDays) || 0,
@@ -476,6 +497,10 @@ Employee ID    : ${p.employeeCode || 'N/A'}
 Designation    : ${p.role || 'Staff'}
 Role           : ${p.role || 'Staff'}
 Payroll Month  : ${p.month}
+Daily Salary   : ${formatCurrency(p.dailySalary || p.dailyRate || Math.round(p.baseSalary / (p.workingDays || 26)))}
+Working Hours  : ${p.workingHours || 8} hrs/day
+Hourly Rate    : ${formatCurrency(p.hourlyRate || Math.round((p.dailySalary || p.dailyRate || Math.round(p.baseSalary / (p.workingDays || 26))) / (p.workingHours || 8)))}/hr
+Hours Worked   : ${p.workedMinutes ? `${Math.floor(p.workedMinutes / 60)}h ${Math.round(p.workedMinutes % 60)}m` : 'N/A'}
 
 WORKING DAYS SUMMARY:
 Working Days   : ${p.workingDays} Days
@@ -1161,7 +1186,13 @@ Reference      : ${p.paymentReference || 'N/A'}
 
                           {/* Base Salary */}
                           <td style={{ padding: '14px 12px', textAlign: 'right', color: '#475569' }}>
-                            {formatCurrency(rec.baseSalary)}
+                            <div style={{ fontWeight: 600, color: '#0F172A' }}>{formatCurrency(rec.baseSalary)}</div>
+                            <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                              ₹{(rec.dailySalary || rec.dailyRate || Math.round(rec.baseSalary / (rec.workingDays || 26))).toLocaleString('en-IN')}/day · {rec.workingHours || 8}h
+                            </div>
+                            <div style={{ fontSize: 10.5, color: '#3B82F6', fontWeight: 600 }}>
+                              ₹{(rec.hourlyRate || Math.round((rec.dailySalary || rec.dailyRate || Math.round(rec.baseSalary / (rec.workingDays || 26))) / (rec.workingHours || 8))).toLocaleString('en-IN')}/hr
+                            </div>
                           </td>
 
                           {/* Days Breakdown */}
@@ -1182,20 +1213,27 @@ Reference      : ${p.paymentReference || 'N/A'}
                                 Attendance Not Available
                               </span>
                             ) : (
-                              <span
-                                style={{
-                                  display: 'inline-block',
-                                  padding: '2px 8px',
-                                  borderRadius: 6,
-                                  background: '#F1F5F9',
-                                  color: '#334155',
-                                  fontWeight: 600,
-                                  fontSize: 12,
-                                }}
-                                title={`Present: ${rec.presentDays} | Paid Leave: ${rec.paidLeaveDays} | Unpaid Leave: ${rec.unpaidLeaveDays} | Absent: ${rec.absentDays}`}
-                              >
-                                {rec.presentDays + rec.paidLeaveDays}/{rec.workingDays} Days
-                              </span>
+                              <div>
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '2px 8px',
+                                    borderRadius: 6,
+                                    background: '#F1F5F9',
+                                    color: '#334155',
+                                    fontWeight: 600,
+                                    fontSize: 12,
+                                  }}
+                                  title={`Present: ${rec.presentDays} | Paid Leave: ${rec.paidLeaveDays} | Unpaid Leave: ${rec.unpaidLeaveDays} | Absent: ${rec.absentDays}`}
+                                >
+                                  {rec.presentDays + rec.paidLeaveDays}/{rec.workingDays} Days
+                                </span>
+                                {rec.workedMinutes != null && rec.workedMinutes > 0 && (
+                                  <div style={{ fontSize: 11, color: '#059669', fontWeight: 600, marginTop: 2 }}>
+                                    {Math.floor(rec.workedMinutes / 60)}h {Math.round(rec.workedMinutes % 60)}m worked
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </td>
 
@@ -1391,23 +1429,68 @@ Reference      : ${p.paymentReference || 'N/A'}
             </div>
 
             <form onSubmit={handleSaveEditPayroll}>
-              {/* Base Salary & Working Days */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+              {/* Base Salary, Daily Rate, Working Hours & Working Days */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 12, background: '#F8FAFC', padding: 12, borderRadius: 8, border: '1px solid #E2E8F0' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
-                    Base Monthly Salary (₹)
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
+                    Daily Salary Rate (₹)
                   </label>
                   <input
                     type="number"
                     className="input-field"
-                    value={editForm.baseSalary}
-                    onChange={(e) => setEditForm({ ...editForm, baseSalary: e.target.value })}
+                    value={editForm.dailySalary}
+                    onChange={(e) => {
+                      const d = Number(e.target.value);
+                      const w = Number(editForm.workingDays) || 26;
+                      setEditForm({
+                        ...editForm,
+                        dailySalary: e.target.value,
+                        baseSalary: !isNaN(d) && d > 0 ? Math.round(d * w) : editForm.baseSalary,
+                      });
+                    }}
                     style={{ width: '100%' }}
                   />
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
+                    Working Hours / Day
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="24"
+                    step="0.5"
+                    className="input-field"
+                    value={editForm.workingHours}
+                    onChange={(e) => setEditForm({ ...editForm, workingHours: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
+                    Monthly Base Salary (₹)
+                  </label>
+                  <input
+                    type="number"
+                    className="input-field"
+                    value={editForm.baseSalary}
+                    onChange={(e) => {
+                      const b = Number(e.target.value);
+                      const w = Number(editForm.workingDays) || 26;
+                      setEditForm({
+                        ...editForm,
+                        baseSalary: e.target.value,
+                        dailySalary: !isNaN(b) && b > 0 && w > 0 ? Math.round(b / w) : editForm.dailySalary,
+                      });
+                    }}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#1A1F36', marginBottom: 5 }}>
                     Working Days in Month
                   </label>
                   <input
@@ -1417,6 +1500,16 @@ Reference      : ${p.paymentReference || 'N/A'}
                     onChange={(e) => setEditForm({ ...editForm, workingDays: e.target.value })}
                     style={{ width: '100%' }}
                   />
+                </div>
+
+                <div style={{ gridColumn: '1 / -1', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '6px 10px', fontSize: 11.5, color: '#1E40AF', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                  <div>
+                    Hourly rate: <strong>₹{computedEditTotals.hourlyRate.toFixed(2)}/hr</strong>
+                    <span style={{ color: '#3B82F6' }}> (Daily ₹{Math.round(computedEditTotals.dailyRate).toLocaleString('en-IN')} ÷ {computedEditTotals.workingHours} hrs)</span>
+                  </div>
+                  <div style={{ color: '#2563EB', fontWeight: 500 }}>
+                    Strictly calculates on actual working hours less lunch & break
+                  </div>
                 </div>
               </div>
 
@@ -1883,9 +1976,10 @@ Reference      : ${p.paymentReference || 'N/A'}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: '#64748B', fontSize: 11 }}>ROLE / POSITION</div>
+                  <div style={{ color: '#64748B', fontSize: 11 }}>DAILY RATE & SHIFT</div>
                   <div style={{ fontWeight: 600, color: '#334155', marginTop: 2 }}>
-                    {selectedPayslip.role || 'Staff'}
+                    ₹{(selectedPayslip.dailySalary || selectedPayslip.dailyRate || Math.round(selectedPayslip.baseSalary / (selectedPayslip.workingDays || 26))).toLocaleString('en-IN')}/day
+                    <span style={{ fontSize: 11, color: '#64748B' }}> · {selectedPayslip.workingHours || 8}h (₹{(selectedPayslip.hourlyRate || Math.round((selectedPayslip.dailySalary || selectedPayslip.dailyRate || Math.round(selectedPayslip.baseSalary / (selectedPayslip.workingDays || 26))) / (selectedPayslip.workingHours || 8))).toLocaleString('en-IN')}/hr)</span>
                   </div>
                 </div>
                 <div>
@@ -1895,7 +1989,7 @@ Reference      : ${p.paymentReference || 'N/A'}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: '#64748B', fontSize: 11 }}>PAYABLE / PRESENT DAYS</div>
+                  <div style={{ color: '#64748B', fontSize: 11 }}>PAYABLE / WORKED</div>
                   <div
                     style={{
                       fontWeight: 600,
@@ -1905,7 +1999,7 @@ Reference      : ${p.paymentReference || 'N/A'}
                   >
                     {selectedPayslip.hasAttendanceData === false
                       ? 'Attendance Not Available'
-                      : `${selectedPayslip.presentDays + selectedPayslip.paidLeaveDays} Days`}
+                      : `${selectedPayslip.presentDays + selectedPayslip.paidLeaveDays} Days ${selectedPayslip.workedMinutes ? `(${Math.floor(selectedPayslip.workedMinutes / 60)}h ${Math.round(selectedPayslip.workedMinutes % 60)}m)` : ''}`}
                   </div>
                 </div>
               </div>

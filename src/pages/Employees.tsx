@@ -16,6 +16,8 @@ interface EmployeeFormData {
   joiningDate: string;
   role: string;
   salary: string | number;
+  dailySalary: string | number;
+  workingHours: string | number;
   employeeId: string;
   status: 'Active' | 'On Leave' | 'Inactive';
   accessRole: EmployeeAccessRole;
@@ -30,6 +32,8 @@ const initialFormState: EmployeeFormData = {
   joiningDate: new Date().toISOString().split('T')[0],
   role: '',
   salary: '',
+  dailySalary: '',
+  workingHours: '8',
   employeeId: '',
   status: 'Active',
   accessRole: 'Employee',
@@ -103,7 +107,21 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
   }, [employees, search, statusFilter]);
 
   const handleFieldChange = (field: keyof EmployeeFormData, value: string | boolean) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === 'dailySalary') {
+        const d = Number(value);
+        if (!isNaN(d) && d > 0) {
+          next.salary = Math.round(d * 26);
+        }
+      } else if (field === 'salary') {
+        const s = Number(value);
+        if (!isNaN(s) && s > 0) {
+          next.dailySalary = Math.round(s / 26);
+        }
+      }
+      return next;
+    });
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: '' }));
     }
@@ -134,6 +152,8 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
       joiningDate: emp.joiningDate || new Date().toISOString().split('T')[0],
       role: emp.role || '',
       salary: emp.salary ?? '',
+      dailySalary: emp.dailySalary ?? (emp.salary ? Math.round(Number(emp.salary) / 26) : ''),
+      workingHours: emp.workingHours ?? 8,
       employeeId: String(emp.employeeId || emp.id || ''),
       status: emp.status || 'Active',
       accessRole: emp.accessRole || 'Employee',
@@ -204,6 +224,8 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
     setIsSubmitting(true);
     try {
       const salaryNum = Number(formData.salary);
+      const dailySalaryNum = Number(formData.dailySalary) > 0 ? Number(formData.dailySalary) : (salaryNum > 0 ? Math.round(salaryNum / 26) : 0);
+      const workingHoursNum = Number(formData.workingHours) > 0 ? Number(formData.workingHours) : 8;
       const payload = {
         employeeId: formData.employeeId.trim(),
         name: formData.name.trim(),
@@ -212,6 +234,8 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
         joiningDate: formData.joiningDate.trim(),
         role: formData.role.trim(),
         salary: salaryNum,
+        dailySalary: dailySalaryNum,
+        workingHours: workingHoursNum,
         status: formData.status,
         accessRole: formData.accessRole,
       };
@@ -281,7 +305,7 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
       return;
     }
 
-    const headers = ['Employee ID', 'Name', 'Email', 'Job Title / Designation', 'Phone', 'Joining Date', 'Salary (₹)', 'Status'];
+    const headers = ['Employee ID', 'Name', 'Email', 'Job Title / Designation', 'Phone', 'Joining Date', 'Daily Salary (₹)', 'Working Hours', 'Monthly Salary (₹)', 'Status'];
     const csvRows = [
       headers.join(','),
       ...filtered.map((e) =>
@@ -292,6 +316,8 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
           `"${e.role || ''}"`,
           `"${e.phone || ''}"`,
           `"${e.joiningDate || ''}"`,
+          `"${e.dailySalary || (e.salary ? Math.round(Number(e.salary) / 26) : 0)}"`,
+          `"${e.workingHours || 8}"`,
           `"${e.salary || 0}"`,
           `"${e.status || 'Active'}"`,
         ].join(',')
@@ -442,8 +468,14 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
                     </td>
                     <td style={{ fontSize: 13, color: '#697586' }}>{e.phone}</td>
                     <td style={{ fontSize: 13, color: '#697586' }}>{e.joiningDate || '—'}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600, fontSize: 13.5 }}>
-                      ₹{(Number(e.salary) || 0).toLocaleString('en-IN')}
+                    <td style={{ textAlign: 'right', fontSize: 13 }}>
+                      <div style={{ fontWeight: 600 }}>₹{(Number(e.salary) || 0).toLocaleString('en-IN')}<span style={{ fontSize: 11, fontWeight: 500, color: '#697586' }}>/mo</span></div>
+                      <div style={{ fontSize: 11.5, color: '#697586', marginTop: 2 }}>
+                        ₹{(Number(e.dailySalary) || (Number(e.salary) ? Math.round(Number(e.salary) / 26) : 0)).toLocaleString('en-IN')}/day · {e.workingHours || 8}h
+                      </div>
+                      <div style={{ fontSize: 10.5, color: '#3B5BDB', fontWeight: 600 }}>
+                        ₹{(Math.round(((Number(e.dailySalary) || (Number(e.salary) ? Math.round(Number(e.salary) / 26) : 0)) / (e.workingHours || 8)) * 100) / 100).toFixed(0)}/hr
+                      </div>
                     </td>
                     <td>
                       <span className={`badge ${statusBadge}`}>{e.status || 'Active'}</span>
@@ -583,21 +615,84 @@ export default function Employees({ onViewProfile }: { onViewProfile?: (id: stri
                   {errors.role && <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4 }}>{errors.role}</div>}
                 </div>
 
-                {/* Monthly Salary */}
-                <div>
-                  <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
-                    Monthly Salary (₹) <span style={{ color: '#EF4444' }}>*</span>
-                  </label>
-                  <input
-                    className="input-base"
-                    type="number"
-                    min="1"
-                    style={{ width: '100%', borderColor: errors.salary ? '#EF4444' : undefined }}
-                    placeholder="e.g. 35000"
-                    value={formData.salary}
-                    onChange={(e) => handleFieldChange('salary', e.target.value)}
-                  />
-                  {errors.salary && <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4 }}>{errors.salary}</div>}
+                {/* Salary & Working Hours Configuration */}
+                <div style={{ gridColumn: 'span 2', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#1E293B', marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>Salary & Working Hours Schedule</span>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: '#64748B' }}>Auto-synced</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
+                        Daily Salary (₹)
+                      </label>
+                      <input
+                        className="input-base"
+                        type="number"
+                        min="0"
+                        style={{ width: '100%' }}
+                        placeholder="e.g. 1000"
+                        value={formData.dailySalary}
+                        onChange={(e) => handleFieldChange('dailySalary', e.target.value)}
+                      />
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>Per working day rate</div>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
+                        Working Hours / Day
+                      </label>
+                      <input
+                        className="input-base"
+                        type="number"
+                        min="1"
+                        max="24"
+                        step="0.5"
+                        style={{ width: '100%' }}
+                        placeholder="8"
+                        value={formData.workingHours}
+                        onChange={(e) => handleFieldChange('workingHours', e.target.value)}
+                      />
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>Shift hours (default 8h)</div>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: '#1A1F36' }}>
+                        Monthly Salary (₹) <span style={{ color: '#EF4444' }}>*</span>
+                      </label>
+                      <input
+                        className="input-base"
+                        type="number"
+                        min="1"
+                        style={{ width: '100%', borderColor: errors.salary ? '#EF4444' : undefined }}
+                        placeholder="e.g. 26000"
+                        value={formData.salary}
+                        onChange={(e) => handleFieldChange('salary', e.target.value)}
+                      />
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>26 days basis</div>
+                    </div>
+                  </div>
+
+                  {errors.salary && <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 6 }}>{errors.salary}</div>}
+
+                  {/* Rate breakdown card */}
+                  {(() => {
+                    const dSal = Number(formData.dailySalary) || (Number(formData.salary) ? Math.round(Number(formData.salary) / 26) : 0);
+                    const wHrs = Number(formData.workingHours) || 8;
+                    const hRate = wHrs > 0 ? dSal / wHrs : 0;
+                    if (dSal <= 0) return null;
+                    return (
+                      <div style={{ marginTop: 10, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#1E40AF', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                        <div>
+                          Hourly rate: <strong style={{ fontSize: 13, color: '#1D4ED8' }}>₹{hRate.toFixed(2)}/hr</strong>
+                          <span style={{ color: '#3B82F6' }}> (₹{dSal.toLocaleString('en-IN')}/day ÷ {wHrs} hrs)</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#2563EB', fontWeight: 500 }}>
+                          ✓ Calculates strictly on working hours less break & lunch
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Employee ID */}

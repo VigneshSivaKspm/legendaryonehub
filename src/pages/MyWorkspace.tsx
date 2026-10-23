@@ -208,6 +208,8 @@ export default function MyWorkspace({ view = 'overview', onNav }: Props) {
   const monthPay = computeMonthPay({
     month,
     salary: Number(myEmployee.salary) || 0,
+    dailySalary: Number(myEmployee.dailySalary) || 0,
+    workingHours: Number(myEmployee.workingHours) || 8,
     workingWeekdays: companyProfile?.workingDays,
     attendance: myAttendance,
     leaves: myLeaves,

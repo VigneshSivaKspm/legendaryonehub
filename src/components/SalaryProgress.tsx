@@ -85,10 +85,13 @@ export default function SalaryProgress({ selectedMonth }: { selectedMonth: strin
     computeMonthPay({
       month,
       salary: Number(e.salary) || 0,
+      dailySalary: Number(e.dailySalary) || 0,
+      workingHours: Number(e.workingHours) || 8,
       workingWeekdays,
       attendance: attendance.filter((a) => String(a.employeeId) === String(e.id)),
       leaves: leaves.filter((l) => String(l.employeeId) === String(e.id)),
       today,
+      now,
     });
 
   // Today across the team
@@ -188,8 +191,8 @@ export default function SalaryProgress({ selectedMonth }: { selectedMonth: strin
           <tbody>
             {teamToday.map((r) => {
               const live = r.day?.kind === 'Present' && r.rec && !r.rec.checkOut;
-              // While still at work, earnings so far = minutes worked × per-minute rate (capped at a full day)
-              const earned = live && r.worked != null ? Math.min(r.worked, PAID_DAY_MINUTES) * r.rates.perMinute : r.day?.earned || 0;
+              // While still at work, earnings so far = minutes worked × per-minute rate
+              const earned = live && r.worked != null ? (r.worked / 60) * r.rates.hourly : r.day?.earned || 0;
               return (
                 <tr
                   key={r.emp.id}
@@ -266,9 +269,9 @@ export default function SalaryProgress({ selectedMonth }: { selectedMonth: strin
       {/* Rates */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <Card label="Monthly Salary" value={inr(pay.salary)} sub="Fixed" />
+        <Card label="Daily Salary" value={formatRate(pay.rates.daily)} sub={`${pay.workingHours}h shift schedule`} color="#3B5BDB" />
         <Card label="Working Days" value={String(pay.workingDays)} sub={(workingWeekdays?.length ? workingWeekdays : ['Mon–Fri']).map((d) => d.slice(0, 3)).join(', ')} />
-        <Card label="Per Day" value={formatRate(pay.rates.daily)} sub="9 paid hours (lunch paid)" color="#3B5BDB" />
-        <Card label="Per Hour" value={formatRate(pay.rates.hourly)} color="#3B5BDB" />
+        <Card label="Hourly Rate" value={formatRate(pay.rates.hourly)} sub={`Daily ÷ ${pay.workingHours}h`} color="#3B5BDB" />
         <Card label="Per Minute" value={formatRate(pay.rates.perMinute)} color="#3B5BDB" />
       </div>
 

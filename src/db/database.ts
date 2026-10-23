@@ -253,6 +253,14 @@ export interface Employee {
   email: string;
   joiningDate: string;
   salary: number;
+  /** Daily salary rate (₹). Auto-synced with monthly salary if not set directly */
+  dailySalary?: number;
+  /** Standard daily working hours (e.g. 8 or 9). Defaults to 8 */
+  workingHours?: number;
+  /** Standard daily shift start e.g. "09:00" */
+  workStartTime?: string;
+  /** Standard daily shift end e.g. "18:00" */
+  workEndTime?: string;
   status: 'Active' | 'On Leave' | 'Inactive';
   /** App access role used for login permissions (separate from the job title in `role`) */
   accessRole?: EmployeeAccessRole;
@@ -433,9 +441,12 @@ export interface PayrollRecord {
   /** shortMinutes × per-minute rate */
   shortTimeDeduction?: number;
   dailyRate?: number;
+  dailySalary?: number;
+  workingHours?: number;
   hourlyRate?: number;
   perMinuteRate?: number;
   workedMinutes?: number;
+  overtimeMinutes?: number;
   otherDeductions: number;
   totalDeductions: number;
   grossSalary: number;

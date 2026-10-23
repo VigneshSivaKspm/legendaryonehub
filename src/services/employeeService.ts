@@ -31,11 +31,17 @@ export async function getAllEmployees(): Promise<Employee[]> {
 
 export async function addEmployee(employeeData: Omit<Employee, 'id'>): Promise<string> {
   const salary = Number(employeeData.salary) || 0;
+  const workingHours = Number(employeeData.workingHours) > 0 ? Number(employeeData.workingHours) : 8;
+  const dailySalary = Number(employeeData.dailySalary) > 0
+    ? Number(employeeData.dailySalary)
+    : (salary > 0 ? Math.round(salary / 26) : 0);
   const now = new Date().toISOString();
 
   const payload = {
     ...employeeData,
     salary,
+    dailySalary,
+    workingHours,
     status: employeeData.status || 'Active',
     createdAt: now,
     updatedAt: now,
@@ -49,9 +55,13 @@ export async function addEmployee(employeeData: Omit<Employee, 'id'>): Promise<s
 
 export async function updateEmployee(id: string | number, updates: Partial<Employee>): Promise<void> {
   const docRef = doc(dbFirestore, EMPLOYEES_COL, String(id));
-  const payload = { ...updates, updatedAt: new Date().toISOString() };
+  const cleanUpdates: Partial<Employee> = { ...updates };
+  if (cleanUpdates.salary !== undefined) cleanUpdates.salary = Number(cleanUpdates.salary) || 0;
+  if (cleanUpdates.dailySalary !== undefined) cleanUpdates.dailySalary = Number(cleanUpdates.dailySalary) || 0;
+  if (cleanUpdates.workingHours !== undefined) cleanUpdates.workingHours = Number(cleanUpdates.workingHours) || 8;
+  const payload = { ...cleanUpdates, updatedAt: new Date().toISOString() };
   await updateDoc(docRef, payload as any);
-  await db.employees.update(id as any, updates);
+  await db.employees.update(id as any, cleanUpdates);
 }
 
 export async function deleteEmployee(id: string | number): Promise<void> {

@@ -116,6 +116,8 @@ export default function Profile({ employeeId, onNav, onBack }: Props) {
     const pay = computeMonthPay({
       month,
       salary: Number(emp.salary) || 0,
+      dailySalary: Number(emp.dailySalary) || 0,
+      workingHours: Number(emp.workingHours) || 8,
       workingWeekdays: companyProfile?.workingDays,
       attendance: myAtt,
       leaves: myLeaves,

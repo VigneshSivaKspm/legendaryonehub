@@ -479,7 +479,16 @@ export default function Timesheets() {
       const payFor = (month: string) => {
         let hit = payCache.get(month);
         if (!hit) {
-          const pay = computeMonthPay({ month, salary, workingWeekdays, attendance: atts, leaves: empLeaves, today: todayStr });
+          const pay = computeMonthPay({
+            month,
+            salary,
+            dailySalary: Number(emp.dailySalary) || 0,
+            workingHours: Number(emp.workingHours) || 8,
+            workingWeekdays,
+            attendance: atts,
+            leaves: empLeaves,
+            today: todayStr,
+          });
           hit = { pay, byDate: new Map(pay.days.map((d) => [d.date, d])) };
           payCache.set(month, hit);
         }

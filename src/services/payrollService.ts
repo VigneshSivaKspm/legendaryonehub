@@ -134,6 +134,8 @@ export async function savePayrollRecord(
 export function payFieldsFrom(pay: MonthPay) {
   return {
     workingDays: pay.workingDays,
+    dailySalary: Math.round(pay.rates.daily * 100) / 100,
+    workingHours: pay.workingHours,
     hasAttendanceData: pay.hasAttendanceData,
     presentDays: pay.presentDays + pay.halfDays * 0.5,
     paidLeaveDays: pay.paidLeaveDays,
@@ -146,6 +148,7 @@ export function payFieldsFrom(pay: MonthPay) {
     earlyLeaveMinutes: pay.earlyLeaveMinutes,
     extraLunchMinutes: pay.extraLunchMinutes,
     shortTimeDeduction: pay.shortTimeDeduction,
+    overtimeMinutes: pay.overtimeMinutes,
     dailyRate: Math.round(pay.rates.daily * 100) / 100,
     hourlyRate: Math.round(pay.rates.hourly * 100) / 100,
     perMinuteRate: Math.round(pay.rates.perMinute * 10000) / 10000,
@@ -176,10 +179,14 @@ export async function generateMonthlyPayroll(monthStr: string, workingWeekdays?:
   for (const emp of activeEmployees) {
     if (!emp.id) continue;
     const empBaseSalary = Number(emp.salary) || 0;
+    const empDailySalary = Number(emp.dailySalary) || 0;
+    const empWorkingHours = Number(emp.workingHours) || 8;
 
     const pay = computeMonthPay({
       month: monthStr,
       salary: empBaseSalary,
+      dailySalary: empDailySalary,
+      workingHours: empWorkingHours,
       workingWeekdays,
       attendance: attendanceRecords.filter((a) => String(a.employeeId) === String(emp.id)),
       leaves: leaveRecords.filter((l) => String(l.employeeId) === String(emp.id)),
