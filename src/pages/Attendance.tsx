@@ -353,8 +353,8 @@ export default function Attendance() {
         date: existingRec.date || defaultDate || selectedDate,
         status: existingRec.status || 'Present',
         checkIn: toTimeInputValue(existingRec.checkIn) || WORK_START,
-        lunchOut: toTimeInputValue(existingRec.lunchOut) || '13:00',
-        lunchIn: toTimeInputValue(existingRec.lunchIn) || '14:00',
+        lunchOut: toTimeInputValue(existingRec.lunchOut),
+        lunchIn: toTimeInputValue(existingRec.lunchIn),
         checkOut: toTimeInputValue(existingRec.checkOut) || WORK_END,
         overtimeHours: existingRec.overtimeHours ? String(existingRec.overtimeHours) : '',
         notes: existingRec.notes || '',
@@ -377,8 +377,8 @@ export default function Attendance() {
           date: rec.date,
           status: rec.status,
           checkIn: toTimeInputValue(rec.checkIn) || WORK_START,
-          lunchOut: toTimeInputValue(rec.lunchOut) || '13:00',
-          lunchIn: toTimeInputValue(rec.lunchIn) || '14:00',
+          lunchOut: toTimeInputValue(rec.lunchOut),
+          lunchIn: toTimeInputValue(rec.lunchIn),
           checkOut: toTimeInputValue(rec.checkOut) || WORK_END,
           overtimeHours: rec.overtimeHours ? String(rec.overtimeHours) : '',
           notes: rec.notes || '',
@@ -1776,8 +1776,9 @@ export default function Attendance() {
                         status,
                         checkIn: defaultCheckInFor(status),
                         checkOut: statusHasTimes(status) ? prev.checkOut || WORK_END : '',
-                        lunchOut: statusHasTimes(status) ? prev.lunchOut || '13:00' : '',
-                        lunchIn: statusHasTimes(status) ? prev.lunchIn || '14:00' : '',
+                        // Keep the lunch choice (including "no lunch") when switching between timed statuses
+                        lunchOut: !statusHasTimes(status) ? '' : statusHasTimes(prev.status) ? prev.lunchOut : '13:00',
+                        lunchIn: !statusHasTimes(status) ? '' : statusHasTimes(prev.status) ? prev.lunchIn : '14:00',
                         overtimeHours: statusHasTimes(status) ? prev.overtimeHours : '',
                       }));
                       if (singleErrors.status) setSingleErrors((prev) => ({ ...prev, status: '' }));
@@ -1819,6 +1820,7 @@ export default function Attendance() {
                           type="time"
                           className="input-base"
                           style={{ width: '100%' }}
+                          disabled={!singleForm.lunchOut && !singleForm.lunchIn}
                           value={singleForm.lunchOut}
                           onChange={(e) => setSingleForm((prev) => ({ ...prev, lunchOut: e.target.value }))}
                         />
@@ -1831,6 +1833,7 @@ export default function Attendance() {
                           type="time"
                           className="input-base"
                           style={{ width: '100%' }}
+                          disabled={!singleForm.lunchOut && !singleForm.lunchIn}
                           value={singleForm.lunchIn}
                           onChange={(e) => setSingleForm((prev) => ({ ...prev, lunchIn: e.target.value }))}
                         />
@@ -1864,6 +1867,20 @@ export default function Attendance() {
                         />
                       </div>
                     </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: '#475569', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={!singleForm.lunchOut && !singleForm.lunchIn}
+                        onChange={(e) =>
+                          setSingleForm((prev) => ({
+                            ...prev,
+                            lunchOut: e.target.checked ? '' : '13:00',
+                            lunchIn: e.target.checked ? '' : '14:00',
+                          }))
+                        }
+                      />
+                      No lunch break (e.g. off-day / holiday work)
+                    </label>
                     {singleErrors.overtimeHours && (
                       <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4 }}>{singleErrors.overtimeHours}</div>
                     )}
