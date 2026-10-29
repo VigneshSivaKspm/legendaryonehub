@@ -13,6 +13,7 @@ import {
 import { dbFirestore } from '../config/firebase';
 import { db, type AttendanceRecord } from '../db/database';
 import { overtimeFor, type RequestKind } from '../utils/attendanceTimes';
+import { refreshPayrollForAttendance } from './payrollService';
 
 const ATTENDANCE_COL = 'attendance';
 
@@ -108,6 +109,7 @@ export async function addAttendance(recordData: Omit<AttendanceRecord, 'id'>): P
 
   // 2. Update Dexie cache
   await db.attendance.put(fullRecord);
+  void refreshPayrollForAttendance(fullRecord.employeeId, fullRecord.date);
   return docRef.id;
 }
 
@@ -131,6 +133,8 @@ export async function updateAttendance(
 
   // 2. Update Dexie cache
   await db.attendance.update(id as any, updates);
+  const saved = await db.attendance.get(id as any);
+  void refreshPayrollForAttendance(saved?.employeeId, saved?.date);
 }
 
 /**
@@ -138,12 +142,15 @@ export async function updateAttendance(
  * Deletes from Firestore first, then deletes from Dexie cache.
  */
 export async function deleteAttendance(id: string | number): Promise<void> {
+  const removed = await db.attendance.get(id as any);
+
   // 1. Delete from Firestore
   const docRef = doc(dbFirestore, ATTENDANCE_COL, String(id));
   await deleteDoc(docRef);
 
   // 2. Delete from Dexie cache
   await db.attendance.delete(id as any);
+  void refreshPayrollForAttendance(removed?.employeeId, removed?.date);
 }
 
 /**
@@ -202,6 +209,11 @@ export async function bulkSaveAttendance(
   // 2. Put into Dexie cache
   await db.attendance.bulkPut(dexiePuts);
   for (const u of dexieUpdates) await db.attendance.update(u.id as any, u.changes);
+
+  // Payroll refreshes run one after another so they don't race on the same records
+  void (async () => {
+    for (const { record } of records) await refreshPayrollForAttendance(record.employeeId, record.date);
+  })();
 }
 
 /**

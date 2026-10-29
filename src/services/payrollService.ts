@@ -10,10 +10,19 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { dbFirestore } from "../config/firebase";
-import { db, safeOpenDatabase, type PayrollRecord } from "../db/database";
+import {
+  db,
+  safeOpenDatabase,
+  type AttendanceRecord,
+  type Employee,
+  type LeaveRequest,
+  type PayrollAdjustment,
+  type PayrollRecord,
+} from "../db/database";
 import { adjustmentsFor, sumAdjustments } from "./payrollAdjustmentService";
 import { computeMonthPay, type MonthPay } from "../utils/salary";
 import { notifyPayrollPaid } from "./emailNotificationService";
+import { getLocalCachedCompanyProfile } from "./companyService";
 
 const PAYROLL_COL = "payroll";
 
@@ -75,9 +84,17 @@ export async function savePayrollRecord(
   const unpaidDeduction = Number(record.unpaidLeaveDeduction) || 0;
   const otherDeductions = Number(record.otherDeductions) || 0;
 
-  const totalDeductions = Math.round(unpaidDeduction + otherDeductions);
-  const grossSalary = Math.round(baseSalary + allowances + bonus + overtime);
-  const netSalary = Math.max(0, Math.round(grossSalary - totalDeductions));
+  // Callers that already worked out the totals (attendance-based pay) keep them;
+  // otherwise fall back to salary + extras − leave & other deductions.
+  const totalDeductions = record.totalDeductions != null
+    ? Math.round(Number(record.totalDeductions) || 0)
+    : Math.round(unpaidDeduction + otherDeductions);
+  const grossSalary = record.grossSalary != null
+    ? Math.round(Number(record.grossSalary) || 0)
+    : Math.round(baseSalary + allowances + bonus + overtime);
+  const netSalary = record.netSalary != null
+    ? Math.max(0, Math.round(Number(record.netSalary) || 0))
+    : Math.max(0, Math.round(grossSalary - totalDeductions));
 
   const isPaid = (record.status || "Pending") === "Paid";
   const paymentDate = isPaid
@@ -172,6 +189,99 @@ export function payFieldsFrom(pay: MonthPay) {
   };
 }
 
+/** Builds one employee's payroll for the month from attendance, leave and adjustments, keeping manual amounts. */
+function buildPayrollRecord(
+  emp: Employee,
+  monthStr: string,
+  workingWeekdays: string[] | undefined,
+  existing: PayrollRecord | undefined,
+  attendanceRecords: AttendanceRecord[],
+  leaveRecords: LeaveRequest[],
+  adjustments: PayrollAdjustment[],
+): Omit<PayrollRecord, "id"> | PayrollRecord {
+  const empBaseSalary = Number(emp.salary) || 0;
+  const empDailySalary = Number(emp.dailySalary) || 0;
+  const empWorkingHours = Number(emp.workingHours) || 8;
+
+  const pay = computeMonthPay({
+    month: monthStr,
+    salary: empBaseSalary,
+    dailySalary: empDailySalary,
+    workingHours: empWorkingHours,
+    workingWeekdays,
+    attendance: attendanceRecords.filter(
+      (a) => String(a.employeeId) === String(emp.id),
+    ),
+    leaves: leaveRecords.filter(
+      (l) => String(l.employeeId) === String(emp.id),
+    ),
+  });
+
+  // Allowances & deductions come from the "Allowances & Deductions" tab when entries exist;
+  // otherwise any amounts typed into the payroll record are kept.
+  const empAdjustments = adjustmentsFor(adjustments, emp.id!, monthStr);
+  const adjTotals = sumAdjustments(empAdjustments);
+  const hasAllowanceEntries = empAdjustments.some(
+    (a) => a.type === "Allowance",
+  );
+  const hasDeductionEntries = empAdjustments.some(
+    (a) => a.type === "Deduction",
+  );
+  const allowances = hasAllowanceEntries
+    ? adjTotals.allowances
+    : existing
+      ? Number(existing.allowances) || 0
+      : 0;
+  const otherDeductions = hasDeductionEntries
+    ? adjTotals.deductions
+    : existing
+      ? Number(existing.otherDeductions) || 0
+      : 0;
+  // Manual only: 0 unless an admin entered an amount
+  const bonus = existing ? Number(existing.bonus) || 0 : 0;
+  const overtime = existing ? Number(existing.overtime) || 0 : 0;
+
+  // Only calculate for presented days and worked hours
+  const earnedBase = pay.hasAttendanceData ? pay.earnedToDate : empBaseSalary;
+  const unworkedDeduction = pay.hasAttendanceData
+    ? Math.max(0, empBaseSalary - earnedBase)
+    : 0;
+  const totalDeductions = Math.round(unworkedDeduction + otherDeductions);
+  const grossSalary = Math.round(
+    empBaseSalary + allowances + bonus + overtime,
+  );
+  const netSalary = Math.max(
+    0,
+    Math.round(earnedBase + allowances + bonus + overtime - otherDeductions),
+  );
+
+  const isPaid = (existing?.status || "Pending") === "Paid";
+
+  return {
+    ...(existing?.id ? { id: existing.id } : {}),
+    employeeId: emp.id!,
+    employeeName: emp.name,
+    employeeCode: emp.employeeId || "",
+    department: emp.dept || "",
+    role: emp.role || "Staff",
+    month: monthStr,
+    baseSalary: empBaseSalary,
+    ...payFieldsFrom(pay),
+    allowances,
+    bonus,
+    overtime,
+    otherDeductions,
+    totalDeductions,
+    grossSalary,
+    netSalary,
+    status: existing?.status || "Pending",
+    paymentDate: isPaid ? existing?.paymentDate || "" : "",
+    paymentMethod: existing?.paymentMethod || "",
+    paymentReference: isPaid ? existing?.paymentReference || "" : "",
+    notes: existing?.notes || "",
+  };
+}
+
 /**
  * Builds (or rebuilds) the month's payroll for every active employee.
  * Fixed salary minus absent days, unpaid leave and short time (late / early / long lunch, per minute),
@@ -203,97 +313,52 @@ export async function generateMonthlyPayroll(
 
   for (const emp of activeEmployees) {
     if (!emp.id) continue;
-    const empBaseSalary = Number(emp.salary) || 0;
-    const empDailySalary = Number(emp.dailySalary) || 0;
-    const empWorkingHours = Number(emp.workingHours) || 8;
-
-    const pay = computeMonthPay({
-      month: monthStr,
-      salary: empBaseSalary,
-      dailySalary: empDailySalary,
-      workingHours: empWorkingHours,
-      workingWeekdays,
-      attendance: attendanceRecords.filter(
-        (a) => String(a.employeeId) === String(emp.id),
-      ),
-      leaves: leaveRecords.filter(
-        (l) => String(l.employeeId) === String(emp.id),
-      ),
-    });
-
     const existing = existingPayrolls.find(
       (p) => String(p.employeeId) === String(emp.id) && p.month === monthStr,
     );
-
-    // Allowances & deductions come from the "Allowances & Deductions" tab when entries exist;
-    // otherwise any amounts typed into the payroll record are kept.
-    const empAdjustments = adjustmentsFor(adjustments, emp.id, monthStr);
-    const adjTotals = sumAdjustments(empAdjustments);
-    const hasAllowanceEntries = empAdjustments.some(
-      (a) => a.type === "Allowance",
+    await savePayrollRecord(
+      buildPayrollRecord(emp, monthStr, workingWeekdays, existing, attendanceRecords, leaveRecords, adjustments),
     );
-    const hasDeductionEntries = empAdjustments.some(
-      (a) => a.type === "Deduction",
-    );
-    const allowances = hasAllowanceEntries
-      ? adjTotals.allowances
-      : existing
-        ? Number(existing.allowances) || 0
-        : 0;
-    const otherDeductions = hasDeductionEntries
-      ? adjTotals.deductions
-      : existing
-        ? Number(existing.otherDeductions) || 0
-        : 0;
-    // Manual only: 0 unless an admin entered an amount
-    const bonus = existing ? Number(existing.bonus) || 0 : 0;
-    const overtime = existing ? Number(existing.overtime) || 0 : 0;
-
-    // Only calculate for presented days and worked hours
-    const earnedBase = pay.hasAttendanceData ? pay.earnedToDate : empBaseSalary;
-    const unworkedDeduction = pay.hasAttendanceData
-      ? Math.max(0, empBaseSalary - earnedBase)
-      : 0;
-    const totalDeductions = Math.round(unworkedDeduction + otherDeductions);
-    const grossSalary = Math.round(
-      empBaseSalary + allowances + bonus + overtime,
-    );
-    const netSalary = Math.max(
-      0,
-      Math.round(earnedBase + allowances + bonus + overtime - otherDeductions),
-    );
-
-    const isPaid = (existing?.status || "Pending") === "Paid";
-
-    const payrollData: Omit<PayrollRecord, "id"> | PayrollRecord = {
-      ...(existing?.id ? { id: existing.id } : {}),
-      employeeId: emp.id,
-      employeeName: emp.name,
-      employeeCode: emp.employeeId || "",
-      department: emp.dept || "",
-      role: emp.role || "Staff",
-      month: monthStr,
-      baseSalary: empBaseSalary,
-      ...payFieldsFrom(pay),
-      allowances,
-      bonus,
-      overtime,
-      otherDeductions,
-      totalDeductions,
-      grossSalary,
-      netSalary,
-      status: existing?.status || "Pending",
-      paymentDate: isPaid ? existing?.paymentDate || "" : "",
-      paymentMethod: existing?.paymentMethod || "",
-      paymentReference: isPaid ? existing?.paymentReference || "" : "",
-      notes: existing?.notes || "",
-    };
-
-    await savePayrollRecord(payrollData);
     generatedCount++;
   }
 
   return generatedCount;
+}
+
+/**
+ * Re-runs an employee's already-generated, unpaid payroll after their attendance changes,
+ * so Payroll (and Firestore) pick up edited times. Does nothing if the month hasn't been generated
+ * yet or is already paid, and never throws — attendance saves must not fail because of payroll.
+ */
+export async function refreshPayrollForAttendance(
+  employeeId: string | number | undefined,
+  date: string | undefined,
+  workingWeekdays: string[] | undefined = getLocalCachedCompanyProfile()?.workingDays,
+): Promise<void> {
+  if (!employeeId || !date) return;
+  const monthStr = date.slice(0, 7);
+  try {
+    await safeOpenDatabase();
+    const existing = (await db.payroll.where("month").equals(monthStr).toArray()).find(
+      (p) => String(p.employeeId) === String(employeeId),
+    );
+    if (!existing || existing.status === "Paid") return;
+    const emp = await db.employees.get(employeeId as any);
+    if (!emp?.id) return;
+    await savePayrollRecord(
+      buildPayrollRecord(
+        emp,
+        monthStr,
+        workingWeekdays,
+        existing,
+        await db.attendance.toArray(),
+        await db.leaveRequests.toArray(),
+        await db.payrollAdjustments.toArray(),
+      ),
+    );
+  } catch (err: any) {
+    console.warn("[PayrollService] Payroll refresh after attendance change failed:", err?.message || err);
+  }
 }
 
 /**

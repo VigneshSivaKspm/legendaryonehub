@@ -6,6 +6,7 @@ import {
   minutesOf,
   lunchMinutes,
   workedMinutes,
+  statusHasTimes,
   toLocalDate,
   toHHMM,
 } from './attendanceTimes';
@@ -205,6 +206,11 @@ export function computeMonthPay(params: {
 
     if (!isWorkingDay) {
       kind = 'Off';
+      // Working on a week-off day: every minute worked is paid as overtime
+      if (worked && record && statusHasTimes(record.status) && (record.checkOut || isOngoingToday)) {
+        overtimeMinutes = worked;
+        earned = worked * rates.perMinute;
+      }
     } else if (date > countedUntil || (date === today && !record)) {
       kind = 'Upcoming'; // future days, and today before checking in
     } else if (record?.status === 'Present' || record?.status === 'Late') {
