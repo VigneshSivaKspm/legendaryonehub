@@ -60,11 +60,18 @@ import {
   isCheckedIn,
   pendingRequests,
   toTimeInputValue,
+  addMinutes,
   type RequestKind,
 } from '../utils/attendanceTimes';
 
 type ViewTab = 'daily' | 'all-days' | 'monthly';
 type AttendanceStatus = 'Present' | 'Absent' | 'On Leave' | 'Late' | 'Half Day';
+
+/** Overtime always follows the check-out time, so an earlier mistyped check-out doesn't leave stale hours behind. */
+function overtimeInputFor(rec: AttendanceRecord): string {
+  const ot = rec.checkOut ? overtimeFor(toTimeInputValue(rec.checkOut)) : Number(rec.overtimeHours) || 0;
+  return ot ? String(ot) : '';
+}
 
 interface SingleFormState {
   employeeId: string | number;
@@ -356,7 +363,7 @@ export default function Attendance() {
         lunchOut: toTimeInputValue(existingRec.lunchOut),
         lunchIn: toTimeInputValue(existingRec.lunchIn),
         checkOut: toTimeInputValue(existingRec.checkOut) || WORK_END,
-        overtimeHours: existingRec.overtimeHours ? String(existingRec.overtimeHours) : '',
+        overtimeHours: overtimeInputFor(existingRec),
         notes: existingRec.notes || '',
       });
     } else if (emp) {
@@ -380,7 +387,7 @@ export default function Attendance() {
           lunchOut: toTimeInputValue(rec.lunchOut),
           lunchIn: toTimeInputValue(rec.lunchIn),
           checkOut: toTimeInputValue(rec.checkOut) || WORK_END,
-          overtimeHours: rec.overtimeHours ? String(rec.overtimeHours) : '',
+          overtimeHours: overtimeInputFor(rec),
           notes: rec.notes || '',
         });
       } else {
@@ -443,7 +450,7 @@ export default function Attendance() {
         lunchOut: toTimeInputValue(rec.lunchOut) || '',
         lunchIn: toTimeInputValue(rec.lunchIn) || '',
         checkOut: toTimeInputValue(rec.checkOut) || '',
-        overtimeHours: rec.overtimeHours ? String(rec.overtimeHours) : '',
+        overtimeHours: overtimeInputFor(rec),
         notes: rec.notes || '',
       }));
     } else {
@@ -471,6 +478,14 @@ export default function Attendance() {
     if (!singleForm.status) errs.status = 'Status is required.';
     const ot = Number(singleForm.overtimeHours || 0);
     if (isNaN(ot) || ot < 0 || ot > 16) errs.overtimeHours = 'Overtime must be between 0 and 16 hours.';
+    if (
+      statusHasTimes(singleForm.status) &&
+      singleForm.checkIn &&
+      singleForm.checkOut &&
+      minutesOf(singleForm.checkOut) <= minutesOf(singleForm.checkIn)
+    ) {
+      errs.checkOut = 'Check-out must be after check-in. Check the AM / PM.';
+    }
 
     return errs;
   };
@@ -1847,7 +1862,12 @@ export default function Attendance() {
                           className="input-base"
                           style={{ width: '100%' }}
                           value={singleForm.checkOut}
-                          onChange={(e) => setSingleForm((prev) => ({ ...prev, checkOut: e.target.value }))}
+                          onChange={(e) => {
+                            const checkOut = e.target.value;
+                            const ot = checkOut ? overtimeFor(checkOut) : 0;
+                            setSingleForm((prev) => ({ ...prev, checkOut, overtimeHours: ot ? String(ot) : '' }));
+                            if (singleErrors.checkOut) setSingleErrors((prev) => ({ ...prev, checkOut: '' }));
+                          }}
                         />
                       </div>
                       <div>
@@ -1884,6 +1904,35 @@ export default function Attendance() {
                     {singleErrors.overtimeHours && (
                       <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4 }}>{singleErrors.overtimeHours}</div>
                     )}
+                    {singleErrors.checkOut && (
+                      <div style={{ color: '#EF4444', fontSize: 11.5, marginTop: 4 }}>{singleErrors.checkOut}</div>
+                    )}
+                    {/* A 12h+ shift is usually a PM check-out that was meant to be AM (the box starts at 6:00 PM) */}
+                    {singleForm.checkIn &&
+                      singleForm.checkOut &&
+                      minutesOf(singleForm.checkOut) - minutesOf(singleForm.checkIn) > 12 * 60 && (
+                        <div style={{ marginTop: 8, fontSize: 11.5, color: '#B54708', background: '#FFFAEB', border: '1px solid #FEDF89', borderRadius: 6, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span>
+                            ⚠ Check-out is {formatTime12h(singleForm.checkOut)}, which makes this a{' '}
+                            {formatDuration(minutesOf(singleForm.checkOut) - minutesOf(singleForm.checkIn))} shift. Did you mean{' '}
+                            {formatTime12h(addMinutes(singleForm.checkOut, -12 * 60))}?
+                          </span>
+                          {minutesOf(addMinutes(singleForm.checkOut, -12 * 60)) > minutesOf(singleForm.checkIn) && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ fontSize: 11.5, padding: '2px 8px' }}
+                              onClick={() => {
+                                const checkOut = addMinutes(singleForm.checkOut, -12 * 60);
+                                const ot = overtimeFor(checkOut);
+                                setSingleForm((prev) => ({ ...prev, checkOut, overtimeHours: ot ? String(ot) : '' }));
+                              }}
+                            >
+                              Use {formatTime12h(addMinutes(singleForm.checkOut, -12 * 60))}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     {/* Live Worked Duration helper */}
                     {singleForm.checkIn && singleForm.checkOut && (
                       <div style={{ marginTop: 8, fontSize: 11.5, color: '#059669', fontWeight: 600 }}>
